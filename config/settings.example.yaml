@@ -1,0 +1,23 @@
+# 模板：复制为 settings.yaml 后填入真实 key（settings.yaml 已 gitignore）
+stock: "000803"
+
+http:
+  timeout: 20
+  retries: 2
+
+cache:
+  dir: artifacts/cache
+  ttl_minutes:
+    quote: 1
+    financial: 1440
+    announcement: 60
+    consensus: 60
+    peer: 60
+    news: 30
+
+artifacts_dir: artifacts
+
+model:
+  base_url: "https://api.deepseek.com"
+  api_key: "<在此填入你的 DeepSeek API Key>"
+  model: "deepseek-v4-flash-vision-exp"

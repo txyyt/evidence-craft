@@ -1,0 +1,12 @@
+# 阶段产物与缓存（可随时重建）
+artifacts/
+
+# 本地工具配置
+.zcode/
+
+# 含 API key，不入库；用 config/settings.example.yaml 作模板
+config/settings.yaml
+
+__pycache__/
+*.pyc
+.venv/
