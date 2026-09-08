@@ -10,3 +10,6 @@ config/settings.yaml
 __pycache__/
 *.pyc
 .venv/
+
+# 工作台用户工作区（上传的样例与任务数据，属本地数据不入库）
+studio_workspace/

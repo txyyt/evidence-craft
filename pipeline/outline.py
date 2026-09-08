@@ -2,27 +2,24 @@
 
 LLM 在此阶段只做三件事：拟标题、给每条观点定结论式小标题、为每条观点
 挑选要引用的事实 ID——不写正文。正文在④按节生成。
+
+角色、行文规则、范文全部来自 Spec v2（template_factory/schema.py），
+本模块的 USER_TMPL 数据板块为股票场景组装逻辑（M7 数据源绑定后泛化）。
 """
 
-import json
-from pathlib import Path
 from typing import Any
 
-import yaml
-
-from datalayer.settings import settings
 from pipeline.llm import chat_json
+from template_factory.schema import SpecV2
 
-SPEC_PATH = settings.resolve("config/report_types/company_review.yaml")
+SYSTEM = """你是{role}，为报告做写作规划。
 
+报告类型：{description}
 
-def load_spec() -> dict[str, Any]:
-    with open(SPEC_PATH, encoding="utf-8") as f:
-        return yaml.safe_load(f)
+【标题要求】
+{title_style}
 
-
-SYSTEM = """你是资深卖方分析师，为上市公司点评报告做写作规划。
-
+【行文规则】
 {rules}
 
 【范文】
@@ -64,10 +61,36 @@ USER_TMPL = """为股票 {stock}({name}) 的点评报告做写作规划。
 """
 
 
+GENERIC_USER_TMPL = """为「{subject}」的报告做写作规划。
+
+【可引用事实】（编号 名称 = 值 单位；标题与各视角的支撑数字只能出自这里）
+{facts}
+
+任务：
+1. 按标题要求拟报告标题。
+2. 为以下 {n_views} 个固定视角各拟一条结论式小标题（heading，判断句），
+   并从【可引用事实】中为它挑选支撑编号（cited_fact_ids）。
+3. 每条观点给一句 guidance：说明论证路径（先什么后什么、用什么数据对比）。
+
+只输出 JSON：
+{{"title": "...", "views": [{{"slot_id": "...", "heading": "...",
+"cited_fact_ids": [...], "guidance": "..."}}]}}
+"""
+
+
 def _fmt_facts(facts: list[dict[str, Any]]) -> str:
     return "\n".join(
         f"[{f['id']}] {f['name']} = {f['value']}{f['unit']}" for f in facts
     )
+
+
+def _fmt_facts_generic(facts: list[dict[str, Any]]) -> str:
+    """通用事实清单：全部标量事实按 id 排序列出（非股票部门没有
+    periods/mainop 等结构，无法分板块）。"""
+    return "\n".join(
+        f"[{f['id']}] {f['name']} = {f['value']}{f['unit']}"
+        for f in sorted(facts, key=lambda x: x["id"])
+    ) or "（无）"
 
 
 def _fmt_mainop(mainop: dict[str, Any]) -> str:
@@ -102,37 +125,50 @@ def _fmt_news(news: list[dict[str, Any]]) -> str:
     return "\n".join(f"- {n['time'][:10]} {n['title']}" for n in news[:15]) or "（无）"
 
 
-def build_outline(doc: dict[str, Any]) -> dict[str, Any]:
-    spec = load_spec()
+def build_outline(doc: dict[str, Any], spec: SpecV2) -> dict[str, Any]:
+    views_sec = spec.section("views")
+    if views_sec is None:
+        raise ValueError("spec 缺少 views 章节")
     meta = doc["meta"]
     facts = doc["facts"]
     coll = doc["collections"]
 
-    latest = coll["periods"][0]["period"] if coll["periods"] else ""
-    period_facts = _fmt_facts([f for f in facts if f["id"].startswith(f"fin.{latest}.")])
-    quote = [f for f in facts if f["id"].startswith("quote.")]
-    q = {f["id"].split(".")[1]: f["value"] for f in quote}
-    cons = coll["consensus"]
-    mean = cons.get("mean_eps_forecast", {})
-
-    system = SYSTEM.format(rules=spec["rules"], fewshot=spec["fewshot"])
-    user = USER_TMPL.format(
-        stock=meta["stock"], name=meta["name"], industry=meta["industry"],
-        price=q.get("price"), mktcap=q.get("mktcap_total"),
-        period_facts=period_facts,
-        mainop=_fmt_mainop(coll["mainop"]),
-        announcements=_fmt_announcements(coll["announcements"][:6]),
-        industry_news=_fmt_industry_news(coll.get("industry_news") or []),
-        news=_fmt_news(coll["news"]),
-        n_orgs=cons.get("n_orgs", 0),
-        eps0=mean.get("predictThisYearEps"), eps1=mean.get("predictNextYearEps"),
-        eps2=mean.get("predictNextTwoYearEps"),
-        n_views=spec["sections"][0]["n_views"],
-    )
+    system = SYSTEM.format(role=spec.writer_role, description=spec.description,
+                           title_style=spec.title_style,
+                           rules=spec.rules_text(),
+                           fewshot=spec.fewshot_for(views_sec))
     schema = ('JSON 字段：title(str)；views(list)：slot_id 必须依次为 '
-              + ",".join(s["id"] for s in spec["sections"][0]["view_slots"])
+              + ",".join(s.id for s in views_sec.view_slots)
               + '；每项含 heading(str)/cited_fact_ids(list)/guidance(str)。')
 
+    # 股票场景：periods/consensus 等齐备时走分板块素材提示词（M2 验证过的形态）；
+    # 其他部门：通用事实清单路径。两条路径共用 SYSTEM 与输出 Schema。
+    if coll.get("periods") and coll.get("consensus"):
+        latest = coll["periods"][0]["period"]
+        period_facts = _fmt_facts(
+            [f for f in facts if f["id"].startswith(f"fin.{latest}.")])
+        quote = [f for f in facts if f["id"].startswith("quote.")]
+        q = {f["id"].split(".")[1]: f["value"] for f in quote}
+        cons = coll["consensus"]
+        mean = cons.get("mean_eps_forecast", {})
+        user = USER_TMPL.format(
+            stock=meta["stock"], name=meta["name"], industry=meta["industry"],
+            price=q.get("price"), mktcap=q.get("mktcap_total"),
+            period_facts=period_facts,
+            mainop=_fmt_mainop(coll["mainop"]),
+            announcements=_fmt_announcements(coll["announcements"][:6]),
+            industry_news=_fmt_industry_news(coll.get("industry_news") or []),
+            news=_fmt_news(coll["news"]),
+            n_orgs=cons.get("n_orgs", 0),
+            eps0=mean.get("predictThisYearEps"), eps1=mean.get("predictNextYearEps"),
+            eps2=mean.get("predictNextTwoYearEps"),
+            n_views=views_sec.n_views,
+        )
+    else:
+        user = GENERIC_USER_TMPL.format(
+            subject=meta.get("name") or meta.get("stock"),
+            facts=_fmt_facts_generic(facts), n_views=views_sec.n_views)
+
     outline = chat_json(system, user, schema)
-    outline["slot_briefs"] = {s["id"]: s["brief"] for s in spec["sections"][0]["view_slots"]}
+    outline["slot_briefs"] = {s.id: s.brief for s in views_sec.view_slots}
     return outline

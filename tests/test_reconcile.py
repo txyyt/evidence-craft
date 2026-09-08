@@ -10,6 +10,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from pipeline import reconcile  # noqa: E402
+from template_factory.schema import load_spec  # noqa: E402
 
 
 def main() -> None:
@@ -24,12 +25,13 @@ def main() -> None:
     good = "2026H1公司实现营业收入7.35亿元，同比增长2.62%；归母净利润0.65亿元。"
     bad = "2026H1公司实现营业收入8.71亿元，同比增长33.15%；归母净利润1.20亿元。"
 
+    spec = load_spec()
     r_good = reconcile.reconcile(doc, outline,
                                  [{"slot_id": "a", "heading": "h", "body": good}],
-                                 {"body": "预测EPS为0.31元。"}, risks)
+                                 {"body": "预测EPS为0.31元。"}, risks, spec)
     r_bad = reconcile.reconcile(doc, outline,
                                 [{"slot_id": "a", "heading": "h", "body": bad}],
-                                {"body": "预测EPS为0.31元。"}, risks)
+                                {"body": "预测EPS为0.31元。"}, risks, spec)
 
     bad_checks = [c for c in r_bad["checks"] if c["section"] == "core_views.a"][0]
     print("正确数字版：", r_good["status"].upper(),

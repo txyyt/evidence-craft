@@ -1,0 +1,57 @@
+# 部门 profile：geology_demo（地学演示部门，全部合成数据）
+# 目的：验证多部门机制与四类数据源（database / local_file / rag）的绑定形态，
+# 真实部门接入时以此为结构模板替换数据源与词表。
+department: geology_demo
+description: 地学演示部门（合成矿区 GM-1），验证多部门机制与数据源插件化
+
+params_schema:
+  project: 项目编号
+  period: 期次
+
+vocabulary: {}
+
+features:
+  kline_chart: false         # 地学报告无指数K线头图
+
+crosschecks: []
+
+# judge 对标范文（部门级缺省；模板 spec 已配置，二者一致）
+judge_reference: config/reference/geology_demo_reference.md
+
+# 数据绑定：spec 槽位 data_needs → 四类 adapter（database / local_file / rag）
+bindings:
+  - need: drilling_summary
+    adapter: sqlite_query
+    params:
+      db_ref: assay_db
+      query: "SELECT 孔号, 项目, 期次, 进尺, 见矿段数, 采样日期 FROM drill_summary WHERE 项目 = :project AND 期次 = :period"
+      query_params: {project: $project, period: $period}
+      id_prefix: drilling
+      id_column: 孔号
+      name_template: "{项目} {孔号} 钻探进尺"
+      value_columns:
+        - {column: 进尺, key: footage, unit: m}
+        - {column: 见矿段数, key: minzones, unit: 段}
+      as_of_column: 采样日期
+
+  - need: assay_summary
+    adapter: xlsx_table
+    params:
+      path: data/geology_demo/assay_ledger.xlsx
+      sheet: 化验台账
+      id_prefix: assay
+      id_column: 样品号
+      name_template: "{孔号} {样品号} 化验"
+      value_columns:
+        - {column: Au品位, key: au, unit: g/t}
+        - {column: 矿段厚度, key: thickness, unit: m}
+      as_of_column: 采样日期
+      table_columns: [孔号, 样品号, Au品位, 矿段厚度]
+      table_id: assay_table
+
+  - need: norms_reference
+    adapter: rag_client
+    params:
+      query: "岩金矿 工业指标 资源量估算"
+      mock_fragments: data/geology_demo/norms_fragments.json
+      top_k: 3

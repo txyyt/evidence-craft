@@ -17,6 +17,12 @@ from datalayer.settings import settings
 _client: OpenAI | None = None
 
 
+def reset() -> None:
+    """丢弃缓存的客户端——页面上改了模型配置后由 server 层调用。"""
+    global _client
+    _client = None
+
+
 def client() -> OpenAI:
     global _client
     if _client is None:
@@ -41,13 +47,16 @@ def chat_json(system: str, user: str, schema_hint: str,
         {"role": "system", "content": system},
         {"role": "user", "content": user + "\n\n" + schema_hint},
     ]
+    # GLM 等始终思考的模型：reasoning_effort 控制思维链档位（low 减少思考
+    # token，约提速 2 倍）；未配置时不传该参数（DeepSeek 不接受也无害，但保持干净）
+    extra = {"reasoning_effort": m["reasoning_effort"]} \
+        if m.get("reasoning_effort") else None
     budget = max_tokens
     for attempt in range(3):
         resp = client().chat.completions.create(
             model=m["model"], messages=messages,
             response_format={"type": "json_object"},
-            max_tokens=budget,
-        )
+            max_tokens=budget, **({"extra_body": extra} if extra else {}))
         msg = resp.choices[0].message
         reasoning = getattr(msg, "reasoning_content", None) or ""
         text = (msg.content or "").strip()

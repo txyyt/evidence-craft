@@ -1,0 +1,26 @@
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+}
+#app { height: 100%; }
+
+.ec-logo {
+  display: flex; align-items: center; gap: 8px;
+  padding: 16px 20px 12px; font-weight: 600; font-size: 15px;
+}
+.ec-logo .dot {
+  width: 10px; height: 10px; border-radius: 50%;
+  background: #18a058; display: inline-block;
+}
+.ec-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 20px; height: 100%;
+}
+.ec-header-left { display: flex; align-items: center; gap: 16px; }
+.ec-page-title { font-size: 16px; font-weight: 600; margin: 0 0 14px; }
+.ec-card { margin-bottom: 16px; }
+.ec-mono { font-family: Consolas, Menlo, monospace; }
+.ec-muted { color: #999; font-size: 12px; }
+.ec-flex { display: flex; gap: 12px; align-items: center; }

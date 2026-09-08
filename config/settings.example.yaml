@@ -21,3 +21,12 @@ model:
   base_url: "https://api.deepseek.com"
   api_key: "<在此填入你的 DeepSeek API Key>"
   model: "deepseek-v4-flash-vision-exp"
+
+# M7 起启用：部门数据源连接（凭据类信息只放本文件，profile 只存引用名）
+databases:
+  assay_db:                 # geology_demo 部门：合成钻探库（SQLite）
+    path: data/geology_demo/assay.db
+
+rag:
+  endpoint: mock            # 对方 RAG 服务的真实 URL 明确后替换 "mock"
+

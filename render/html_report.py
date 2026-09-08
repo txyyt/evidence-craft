@@ -1,11 +1,17 @@
-"""⑦ HTML 渲染：研报版式（标题区/核心观点/盈利预测/风险提示/溯源附注）。"""
+"""⑦ HTML 渲染：按 Spec v2 的章节列表驱动版式（kind 分发渲染块）。
+
+views → 标题 + 观点块；table → 标题 + 表格 + 说明文字；risk → 标题 + 风险行；
+text/figures → M7/M8 实现。评级由调用方传入（pipeline/rating.py），
+免责/说明段来自 spec.disclaimer，溯源附注与头图为通用能力。
+"""
 
 import html
-import re
 from datetime import datetime
 from typing import Any
 
-from pipeline.sections import forecast_table
+from pipeline.sections import render_table
+from render.common import md_table_rows
+from template_factory.schema import SpecV2
 
 TPL = """<!DOCTYPE html>
 <html lang="zh-CN">
@@ -43,17 +49,7 @@ TPL = """<!DOCTYPE html>
     <h1>{title}</h1>
   </div>
 {kline_img}
-  <h2>核心观点</h2>
-{views_html}
-
-  <h2>盈利预测与估值</h2>
-{table_html}
-{table_note}
-  <p>{forecast_note}</p>
-
-  <h2>风险提示</h2>
-  <div class="risks"><p>{risks}</p></div>
-
+{body}
   <h2>附：数据溯源</h2>
   <table class="appendix">
     <tr><th>事实编号</th><th>指标</th><th>值</th><th>来源</th><th>截至</th></tr>
@@ -61,8 +57,7 @@ TPL = """<!DOCTYPE html>
   </table>
 
   <div class="disclaimer">
-    本报告由 EvidenceCraft 系统自动生成，评级为规则推算结果，所有数字溯源自公开数据
-    （东方财富数据接口），仅供技术研究使用，不构成任何投资建议。
+    {disclaimer}
     生成时间 {generated_at}。
   </div>
 </body>
@@ -72,41 +67,13 @@ TPL = """<!DOCTYPE html>
 APPENDIX_ROW = "    <tr><td>{id}</td><td>{name}</td><td>{value}{unit}</td><td>{source}</td><td>{as_of}</td></tr>"
 
 
-def _rule_rating(doc: dict[str, Any]) -> str:
-    """规则评级 v1：今年预测 PE 相对板块中位数折价 15% 以上 → 增持，
-    溢价 15% 以上 → 中性，其余 → 增持（业绩同比 >30% 时）或中性。"""
-    q = {f["id"].split(".")[1]: f["value"] for f in doc["facts"]
-         if f["id"].startswith("quote.")}
-    mean = doc["collections"]["consensus"].get("mean_eps_forecast", {})
-    eps = mean.get("predictThisYearEps")
-    peers_pe = sorted(p["pe_ttm"] for p in doc["collections"]["peers"] if p.get("pe_ttm"))
-    if not (eps and q.get("price") and peers_pe):
-        return "未评级"
-    pe = q["price"] / eps
-    median = peers_pe[len(peers_pe) // 2]
-    if pe < median * 0.85:
-        return "增持"
-    if pe > median * 1.15:
-        return "中性"
-    latest = doc["collections"]["periods"][0] if doc["collections"]["periods"] else {}
-    return "增持" if (latest.get("netprofit_yoy_pct") or 0) > 30 else "中性"
-
-
 def _esc(s: Any) -> str:
     return html.escape(str(s), quote=False)
 
 
 def _md_table_html(md: str) -> tuple[str, str]:
-    """forecast_table 的 markdown 转 HTML 表格；非表格行（表注）单独返回。"""
-    rows, notes = [], []
-    for line in md.strip().splitlines():
-        if not line.lstrip().startswith("|"):
-            notes.append(line.strip())
-            continue
-        cells = [c.strip() for c in line.strip().strip("|").split("|")]
-        if cells and all(re.fullmatch(r"-{3,}", c) for c in cells if c):
-            continue  # 分隔行
-        rows.append(cells)
+    """渲染器 markdown 表 → HTML 表格 + 表注（解析共用 render/common）。"""
+    rows, note = md_table_rows(md)
     if not rows:
         return "", ""
     head = "<tr>" + "".join(f"<th>{_esc(c)}</th>" for c in rows[0]) + "</tr>"
@@ -114,39 +81,52 @@ def _md_table_html(md: str) -> tuple[str, str]:
         "<tr>" + "".join(f"<td>{_esc(c)}</td>" for c in r) + "</tr>"
         for r in rows[1:])
     table = f'<table><thead>{head}</thead><tbody>{body}</tbody></table>'
-    note = f'<p class="table-note">{_esc(" ".join(notes))}</p>' if notes else ""
-    return table, note
+    return table, (f'<p class="table-note">{_esc(note)}</p>' if note else "")
+
+
+def _section_html(sec: Any, doc: dict[str, Any], written: list[dict[str, Any]],
+                  forecast: dict[str, Any], risks: dict[str, Any],
+                  spec: SpecV2) -> str:
+    if sec.kind == "views":
+        views_html = "\n".join(
+            f'  <div class="view"><b>{_esc(s["heading"])}</b>{_esc(s["body"])}</div>'
+            for s in written)
+        return f"  <h2>{_esc(sec.title)}</h2>\n{views_html}\n"
+    if sec.kind == "table":
+        table_html, table_note = _md_table_html(render_table(doc, spec))
+        return (f"  <h2>{_esc(sec.title)}</h2>\n{table_html}\n{table_note}\n"
+                f"  <p>{_esc(forecast['body'])}</p>\n")
+    if sec.kind == "risk":
+        return (f'  <h2>{_esc(sec.title)}</h2>\n'
+                f'  <div class="risks"><p>{_esc(risks["body"])}</p></div>\n')
+    return ""  # text / figures：M7/M8 实现
 
 
 def render(doc: dict[str, Any], outline: dict[str, Any],
-           sections: list[dict[str, Any]], forecast_note: str,
-           risks_text: str, kline_png: str | None = None) -> str:
+           sections: list[dict[str, Any]], forecast: dict[str, Any],
+           risks: dict[str, Any], spec: SpecV2, rating: str,
+           kline_png: str | None = None) -> str:
     meta = doc["meta"]
-    kline_img = (f'\n  <img src="{kline_png}" alt="上证指数K线" '
+    kline_img = (f'\n  <img src="{kline_png}" alt="近期走势K线" '
                  'style="width:100%; margin:14px 0 4px; border:1px solid #eee">'
                  if kline_png else "")
-    views_html = "\n".join(
-        f'  <div class="view"><b>{_esc(s["heading"])}</b>{_esc(s["body"])}</div>'
-        for s in sections)
+    body = "\n".join(filter(None, (
+        _section_html(sec, doc, sections, forecast, risks, spec)
+        for sec in spec.sections)))
     appendix = "\n".join(
         APPENDIX_ROW.format(id=_esc(f["id"]), name=_esc(f["name"]), value=f["value"],
                             unit=_esc(f["unit"]), source=_esc(f["source"]),
                             as_of=_esc(f["as_of"]))
-        for f in doc["facts"] if f["id"].startswith(("fin.", "quote.")))
-
-    table_html, table_note = _md_table_html(forecast_table(doc))
+        for f in doc["facts"])
     return TPL.format(
         title=_esc(outline["title"]),
-        rating=_rule_rating(doc),
-        code=_esc(meta["stock"]), name=_esc(meta["name"]),
-        industry=_esc(meta["industry"]),
+        rating=_esc(rating),
+        code=_esc(meta.get("stock", "")), name=_esc(meta.get("name", "")),
+        industry=_esc(meta.get("industry", "")),
         date=datetime.now().strftime("%Y-%m-%d"),
         kline_img=kline_img,
-        views_html=views_html,
-        table_html=table_html,
-        table_note=table_note,
-        forecast_note=_esc(forecast_note),
-        risks=_esc(risks_text),
+        body=body,
         appendix_rows=appendix,
+        disclaimer=_esc(spec.disclaimer or ""),
         generated_at=datetime.now().strftime("%Y-%m-%d %H:%M"),
     )

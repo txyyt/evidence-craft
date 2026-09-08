@@ -46,6 +46,17 @@ def get_json(
     raise SourceError(f"GET {url} 失败: {last_err}")
 
 
+def post_json(url: str, body: dict, timeout: Optional[int] = None) -> Any:
+    """POST JSON → JSON（M7：外部检索服务等自有 API，不带东财 Referer）。"""
+    try:
+        resp = _session.post(url, json=body,
+                             timeout=timeout or settings.http["timeout"])
+        resp.raise_for_status()
+        return json.loads(resp.content)
+    except Exception as e:  # noqa: BLE001
+        raise SourceError(f"POST {url} 失败: {e}")
+
+
 def pct(v: Any) -> Optional[float]:
     """接口返回的百分数（如 2.62 表示 2.62%）原样转 float。"""
     return round(float(v), 4) if v is not None else None
