@@ -1,0 +1,97 @@
+# 报告规格 v2：矿产勘查阶段总结（geology_demo，合成演示部门）
+# 与 company_review 一起验证多模板机制；数据来自合成 SQLite/xlsx/RAG mock
+report_type: geology_demo_review
+version: 2
+description: 矿产勘查项目阶段性总结：钻探工程进展 + 化验品位成果 + 工业指标对照
+writer_role: 资深地质勘查项目负责人
+
+title_style: |
+  结论式标题：把本期最重要的勘查发现写进标题，用逗号分隔两个短句。
+  前句讲工程进展（如"累计钻探逾两千米的矿段控制"），后句讲品位或资源意义。
+  15~25 字。
+
+title_check:
+  title_len: [10, 30]
+  require_comma: true
+
+sections:
+  - id: core_findings
+    title: 核心发现
+    kind: views
+    n_views: 3
+    view_style: |
+      每条 = 结论式小标题（8~15字，判断句）+ 一段论述（80~160字）。
+      论述中每个数字都必须来自提供的事实切片，禁止编造、计算或外推任何数值。
+      文风：客观陈述 + 数据支撑 + 地质解释，不用感叹号，不堆形容词。
+    check:
+      heading_len: [6, 20]
+      body_len: [60, 200]
+    view_slots:
+      - id: drilling_progress
+        brief: 钻探工程进展：本期各钻孔的进尺与见矿段数，指出控制程度结论。
+        data_needs: [drilling_summary]
+        fewshot: |
+          【范文】本期钻探工程控制程度显著提高。矿区本期单孔进尺 301.7~468.9m，
+          其中 ZK1804 孔进尺最深，达 468.9m；ZK1803 孔见矿段最多。钻孔沿勘探线
+          方向布设，深部矿化延伸情况得到进一步控制。
+      - id: assay_highlights
+        brief: 化验品位成果：主要见矿样品的品位与厚度，指出品位最高的样品。
+        data_needs: [assay_summary]
+        fewshot: |
+          【范文】化验成果显示矿化连续性较好。ZK1806 孔 GM1-ZK1806-002 号样品
+          品位最高，达 6.17g/t，矿段厚度 4.3m；ZK1804 孔 GM1-ZK1804-001 号样品
+          品位 6.0g/t 次之，矿段厚度 3.7m。
+      - id: industrial_context
+        brief: 工业指标对照：见矿品位与规范工业指标（边界品位、最低工业品位）的
+               对照关系，说明矿化意义与代表性注意事项。
+        data_needs: [norms_reference]
+        fewshot: |
+          【范文】按规范工业指标衡量，边界品位 1.0g/t、最低工业品位 2.5g/t，
+          本期最高品位 6.17g/t 明显高于最低工业品位，多数见矿样品超过边界品位，
+          矿化具有工业意义；但特高品位样品的代表性仍需内检验证。
+  - id: assay_table
+    title: 本期化验成果表
+    kind: table
+    table: assay_table
+    style: |
+      表格由系统从化验台账直接生成，你只写一段 50~120 字说明文字：
+      点出样品数量与品位分布特征；文字中引用的数字必须与表格一致。
+    check:
+      body_len: [30, 150]
+  - id: uncertainty
+    title: 不确定性说明
+    kind: risk
+    strategy: enumerate
+    style: |
+      写 3~4 条不确定性说明，每条 10~25 字、用分号分隔成一行。
+      方法（逐项列举）：样品代表性、品位变化性、工程控制程度、指标口径。
+      范例："样品数量有限代表性不足；品位沿走向变化较大；深部工程控制不足。"
+    check:
+      count: [3, 4]
+      item_suffix: 风险
+      min_shaped: 0
+
+tables:
+  - id: assay_table
+    renderer: generic_rows
+    columns: [孔号, 样品号, Au品位, 矿段厚度]
+
+writing_rules:
+  - 正文数字必须能在事实切片中找到出处，对账层将逐一对账
+  - 禁止对事实数字做任何计算——合计、倍数、差值、平均品位等一律不得出现
+  - 品位保留台账原始精度（g/t 两位小数），厚度保留一位小数（m）
+  - 禁止出现事实切片之外的钻孔号、样品号、地名、项目名
+
+forbidden_words: [我们认为, 重大突破, 惊人, ！]
+
+controlled_vocab: {}
+
+check_rules: []
+
+# judge 对标范文（合成演示范文；真实部门接入时替换为该部门标杆报告）
+judge_reference: config/reference/geology_demo_reference.md
+
+disclaimer: |
+  本报告由 EvidenceCraft 系统自动生成（geology_demo 合成演示数据），
+  所有数字溯源自部门台账、数据库与规范检索片段，仅供技术研究使用，
+  不作为勘查或投资决策依据。

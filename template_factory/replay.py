@@ -34,6 +34,30 @@ def _unit_after(text: str, end: int) -> str:
     return ""
 
 
+def _facts_from_text(text: str, source: str, facts: list, seen: set) -> None:
+    """自由文本（范文选段/风格描述）中的数字 → 补充事实。模型会模仿 fewshot
+    里的数字，若这些样例数字不在事实索引中会被对账误判为编造。"""
+    for sent in re.split(r"[。；！？\n]", text):
+        matches = list(reconcile_mod._NUM_RE.finditer(sent))
+        if not matches:
+            continue
+        clean = re.sub(r"\s", "", sent)
+        for m in matches:
+            raw = m.group(0).replace(",", "")
+            if reconcile_mod._YEAR_RE.match(raw):
+                continue
+            value = float(raw)
+            if value in seen:
+                continue
+            seen.add(value)
+            facts.append({
+                "id": f"s.{len(facts) + 1:03d}", "name": clean[:44],
+                "value": value, "unit": _unit_after(sent, m.end()),
+                "source": source, "as_of": "样例回放",
+                "reliability": "manual",
+            })
+
+
 def _facts_from_sample(parsed: dict[str, Any], max_facts: int = 60) -> list[dict[str, Any]]:
     """样例正文数字 + 所在句 → 临时事实（replay 命名空间）。"""
     as_of = "样例回放"
@@ -42,29 +66,11 @@ def _facts_from_sample(parsed: dict[str, Any], max_facts: int = 60) -> list[dict
     for b in parsed["blocks"]:
         if b["type"] != "para":
             continue
-        for sent in re.split(r"[。；！？\n]", b["text"]):
-            matches = list(reconcile_mod._NUM_RE.finditer(sent))
-            if not matches:
-                continue
-            clean = re.sub(r"\s", "", sent)
-            for m in matches:
-                raw = m.group(0).replace(",", "")
-                if reconcile_mod._YEAR_RE.match(raw):
-                    continue
-                value = float(raw)
-                if value in seen:
-                    continue
-                seen.add(value)
-                unit = _unit_after(sent, m.end())
-                name = clean[:44]
-                facts.append({
-                    "id": f"s.{len(facts) + 1:03d}", "name": name,
-                    "value": value, "unit": unit,
-                    "source": f"样例回放:{Path(parsed['source']).name}",
-                    "as_of": as_of, "reliability": "manual",
-                })
-                if len(facts) >= max_facts:
-                    return facts
+        _facts_from_text(b["text"],
+                         f"样例回放:{Path(parsed['source']).name}", facts, seen)
+        if len(facts) >= max_facts:
+            del facts[max_facts:]
+            return facts
     return facts
 
 
@@ -135,6 +141,12 @@ def _run_once(spec_path: str, sample_path: str) -> dict[str, Any]:
     facts = _facts_from_sample(parsed)
     if not facts:
         raise ValueError("样例中未抽取到数字事实，无法回放")
+    # 范文选段/形态描述里的样例数字同样入账——模型会模仿 fewshot 中的数字，
+    # 这些数字一定出自样例，不在索引里会被对账误判为编造
+    seen_aux = {f["value"] for f in facts}
+    aux = "。".join(filter(None, [s.fewshot or "" for s in views_sec.view_slots]
+                           + [views_sec.view_style or "", spec.title_style or ""]))
+    _facts_from_text(aux, "样例回放:范文选段", facts, seen_aux)
     doc = _replay_doc(facts)
 
     from pipeline.llm import chat_json

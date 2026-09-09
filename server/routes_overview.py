@@ -1,7 +1,8 @@
-"""首页 Dashboard 路由：部门/模板/最近运行汇总 + 健康检查。"""
+"""首页 Dashboard 路由：报告类型/最近生成汇总 + 健康检查 + 任务状态。"""
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
+from datalayer import registry
 from datalayer.settings import mask_key, settings
 
 router = APIRouter(prefix="/api")
@@ -17,29 +18,21 @@ def health() -> dict:
                       "api_key_masked": mask_key(m.get("api_key", ""))}}
 
 
+@router.get("/jobs/{job_id}")
+def job_status(job_id: str) -> dict:
+    """任意后台任务（提取/回放/试跑）的状态与错误——页面排查用。"""
+    from server import bus
+    t = bus.HUB.get(job_id)
+    if not t:
+        raise HTTPException(404, "任务不存在或服务已重启")
+    return {"id": t.id, "status": t.status, "error": t.error,
+            "error_detail": (t.error_detail or "")[-800:] if t.error_detail else None,
+            "result": t.result if t.status == "done" else None}
+
+
 @router.get("/overview")
 def overview() -> dict:
-    import os
-
-    import yaml
-
-    root = settings.resolve("config/departments")
-    departments = []
-    if root.exists():
-        for d in sorted(p for p in root.iterdir() if p.is_dir()):
-            pf = d / "profile.yaml"
-            if not pf.exists():
-                continue
-            with open(pf, encoding="utf-8") as f:
-                profile = yaml.safe_load(f) or {}
-            departments.append({
-                "id": d.name,
-                "description": profile.get("description", ""),
-                "bindings": len(profile.get("bindings") or []),
-            })
-    troot = settings.resolve("config/report_types")
-    templates = len(list(troot.glob("*.yaml"))) if troot.exists() else 0
-
+    types = registry.list_types()
     from server import bus
     from server.routes_runs import _artifacts_root
     aroot = _artifacts_root()
@@ -47,9 +40,9 @@ def overview() -> dict:
     markers = ("meta.json", "outline.json", "judge_report.json", "final.html")
     if aroot.exists():
         dirs = [d for d in aroot.iterdir()
-                if d.is_dir() and not d.name.startswith(".")
+                if d.is_dir() and not d.name.startswith((".", "_"))
                 and any((d / m).exists() for m in markers)]
         for d in sorted(dirs, key=lambda x: x.stat().st_mtime, reverse=True)[:6]:
             runs.append(bus.summarize(d))
-    return {"departments": departments, "templates": templates,
+    return {"types": types, "n_types": len(types),
             "recent_runs": runs, "model": health()["model"]}

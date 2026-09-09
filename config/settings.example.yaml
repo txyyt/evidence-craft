@@ -30,3 +30,8 @@ databases:
 rag:
   endpoint: mock            # 对方 RAG 服务的真实 URL 明确后替换 "mock"
 
+
+# 流水线参数（系统设置页可改）
+pipeline:
+  judge_threshold: 36   # judge 五维总分达到该值且无单维过低才 PASS
+  revise_rounds: 2      # 评审不过时退回重写的最大轮数

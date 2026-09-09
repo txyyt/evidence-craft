@@ -68,7 +68,32 @@ def test_model(cfg: ModelCfgIn) -> dict:
                 "error": str(e)[:300]}
 
 
+@router.get("/pipeline")
+def get_pipeline() -> dict:
+    p = settings.pipeline or {}
+    return {"judge_threshold": int(p.get("judge_threshold", 36)),
+            "revise_rounds": int(p.get("revise_rounds", 2))}
+
+
+class PipelineIn(BaseModel):
+    judge_threshold: int = 36
+    revise_rounds: int = 2
+
+
+@router.put("/pipeline")
+def put_pipeline(body: PipelineIn) -> dict:
+    if not (20 <= body.judge_threshold <= 50):
+        raise HTTPException(422, "judge 门槛应在 20~50 之间")
+    if not (0 <= body.revise_rounds <= 5):
+        raise HTTPException(422, "修订轮数应在 0~5 之间")
+    from datalayer.settings import update_sections
+    update_sections({"pipeline": {"judge_threshold": body.judge_threshold,
+                                  "revise_rounds": body.revise_rounds}})
+    settings.reload()
+    return get_pipeline()
+
+
 @router.get("/about")
 def about() -> dict:
-    return {"name": "EvidenceCraft 多部门报告平台", "milestone": "M8",
+    return {"name": "EvidenceCraft 报告生成工具", "milestone": "M8-R1",
             "pipeline_stages": ["data", "outline", "sections", "review", "render"]}

@@ -9,19 +9,17 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from server import routes_admin, routes_overview, routes_runs, routes_settings, \
-    routes_sources, routes_studio, routes_templates
+from server import routes_overview, routes_runs, routes_settings, \
+    routes_sources, routes_types
 
 ROOT = Path(__file__).resolve().parent.parent
 
-app = FastAPI(title="EvidenceCraft 工作台", version="0.8.0")
+app = FastAPI(title="EvidenceCraft 报告生成工具", version="1.0.0")
 app.include_router(routes_overview.router)
 app.include_router(routes_settings.router)
 app.include_router(routes_runs.router)
-app.include_router(routes_studio.router)
-app.include_router(routes_templates.router)
+app.include_router(routes_types.router)
 app.include_router(routes_sources.router)
-app.include_router(routes_admin.router)
 
 
 @app.get("/")

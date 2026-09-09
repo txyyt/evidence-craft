@@ -58,13 +58,58 @@
 | 部门 profile 字段 | `bindings[{need, adapter, params}]`、`vocabulary`、`features`（如 kline_chart）、`crosschecks`、`judge_reference`（部门级缺省，模板可覆盖）、`params_schema` |
 | 流水线 CLI | `python run_pipeline.py --full --department <dept> [--stock X] [--project P] [--period T] [--spec xxx.yaml]`；部门缺省 stock_demo；judge 范文解析链：spec → profile |
 
-## M8 将消费的产物目录（已稳定）
+## server（M8-R1 重构——单用户"报告类型"模型）
+
+界面实体：**报告类型 = 报告结构（report.yaml，Spec v2）+ 数据来源（sources.yaml：
+name/status/params_schema/vocabulary/features/crosschecks/judge_reference/bindings）**。
+目录：`config/report_types/<id>/`（report.yaml、sources.yaml、versions/report/ 版本留痕
+（保留 20 份）、samples/、parsed/、chat.json、replay_history.json）。
+流水线按 `--type <id>` 取 spec 与绑定；每次生成 meta.json 记录
+`type_id / template_fingerprint（report.yaml sha1 前 12 位）/ params`。
+
+启动：`python -m uvicorn server.main:app --port 8765`；前端 `static/`（Vue3 +
+NaiveUI + ECharts，vendor/ 本地化，免构建）；静态产物挂 `/artifacts/<dir>/`。
+SSE 事件协议：`{type: progress|end, stage, message, data|None, ts}`，end 携带
+`{status: done|error|cancelled, run_dir, error, error_detail}`；data 恒含
+`llm_calls / llm_seconds / stage_seconds`；600s 心跳。
+
+| 路由 | 契约 |
+|---|---|
+| `GET /api/health` · `GET /api/overview` | 健康摘要（key 掩码）/ 首页汇总 `{types, n_types, recent_runs, model}` |
+| `GET /api/jobs/{job_id}` | 任意后台任务状态：`{status, error, error_detail, result}` |
+| `GET/PUT /api/settings/model` · `POST .../test` | 模型配置（api_key 只写不回显）；PUT 热生效；test → `{ok, latency_s, reply\|error}` |
+| `GET/PUT /api/settings/pipeline` | `judge_threshold`（默认 36）/ `revise_rounds`（默认 2），judge 与流水线消费 |
+| `GET/PUT /api/sources/connections` · `POST /test/database` · `POST /test/rag` | 全局连接（databases/rag）；SQLite 只读连通；RAG mock/live 探测 |
+| `GET /api/sources/adapters` | 适配器注册表 `[{key, kind, reliability}]` |
+| `GET/POST /api/types` · `GET/PUT .../sources` · `POST /{id}/status` · `POST /{id}/copy` · `DELETE /{id}` | 报告类型 CRUD + 状态机（draft→verified 需最近回放通过；verified→published 需有 report.yaml） |
+| `POST /api/types/load-demo` | 从 `config/demo_types/` 载入演示报告类型（已存在则跳过） |
+| `POST /api/types/{id}/extract`（multipart files[]） | `extract.run()` 线程执行 → `{job_id, events_url}`；样例与解析缓存写入类型目录 |
+| `GET /api/types/{id}` · `/sample/{file}` · `/jobs/{job}/events` | 全量详情 / 样例解析树 / 任务 SSE |
+| `PUT /api/types/{id}/report`（JSON）· `/report-yaml`（文本） | 结构保存：SpecV2 校验 → 版本快照 → 落盘 → 字段级 diff |
+| `POST /api/types/{id}/patch {message}` · `/apply {ops}` | 对话 patch（patchlib：set/del/insert，路径 `sections[0].x`）：校验不落盘 → diff；apply 校验+快照落盘 |
+| `POST /api/types/{id}/replay {sample, rounds}` | 回放（多轮取最好），**追加 replay_history**（判定/字数合规/未对账数）；PASS/PASS_WITH_WARN 且为草稿 → 自动置 verified |
+| `POST /api/types/{id}/dryrun {params}` | 真实数据试跑一节，结果落 dryrun_result.json |
+| `POST /api/types/{id}/bindings/test {index, params}` | 单绑定测试：$ctx 链累积执行 → `{ok, n_facts, resolved(解析后实际参数), warnings, sample}` |
+| `GET /api/types/{id}/versions` · `/versions/diff?a&b` · `POST /versions/rollback` | 版本时间线 / unified diff / 回滚（回滚前自动留痕） |
+| `POST /api/runs/start {type_id, stock?, project?, period?}` | 工作线程跑流水线；`cancel_event` 支持取消（阶段边界干净退出，产物写 `_cancelled` 标记） |
+| `POST /api/runs/preview {type_id, params}` | 数据预检：只跑数据层 → `{ok, n_facts, warnings, crosscheck, sample}` |
+| `POST /api/runs/{id}/cancel` · `GET /api/runs/{id}` | 取消 / 状态（含 error_detail） |
+| `GET /api/runs?type_id=` · `/artifact?dir&file` · `/report?dir&format=html\|docx` · `DELETE /{dir}` | 历史（可按类型筛选）/ 产物 JSON（防穿越）/ 报告下载 / 删除运行 |
+
+安全约定：凭据只进 settings.yaml（gitignored），API 响应密钥一律掩码；
+report.yaml 每次保存前自动快照（versions/report/，保留 20 份）；artifacts 路径
+参数白名单校验；任务/运行错误返回"人话摘要 + error_detail 完整堆栈"。
+
+
+## 产物目录（已稳定，报告详情页直接消费）
 
 ```
 artifacts/<subject>_<ts>/
+  meta.json（type_id/type_name/template_fingerprint/params）
   facts.json / crosscheck_report.json / outline.json / sections.json
   reconcile_report.json / validate_report.json / judge_report.json
-  revision_roundN.json / index_kline.png / final.html
+  revision_roundN.json / index_kline.png / final.html / final.docx
+  _cancelled（取消标记，仅被取消的运行）
 ```
 
 ## server（M8 新增——工作台薄层）

@@ -1,0 +1,129 @@
+# 报告规格 v2：公司点评（company_review）
+# 结构与写作规范对标真实券商点评（范文：国信证券 2026-09-07 山高环能点评）
+# v2 语法见 template_factory/schema.py：章节按 kind 分发、范文挂槽位/章节级、
+# 校验参数与规则配置化。本模板为首个 v2 模板，由 v1 迁移并通过三股票回归验证。
+report_type: company_review
+version: 2
+description: 事件驱动的上市公司季报/中报点评，结构固定、每条观点须有数据支撑
+writer_role: 资深卖方分析师
+
+title_style: |
+  结论式标题：把最重要的 1~2 个判断写进标题，用逗号分隔两个短句。
+  前句讲当期业绩亮点（如"Q2油脂盈利弹性加速兑现"），后句讲未来催化
+  （如"定增审核通过打开未来成长空间"）。20~30 字。
+  范例："Q2油脂盈利弹性加速兑现，定增审核通过打开未来成长空间"
+
+title_check:
+  title_len: [10, 40]
+  require_comma: true
+
+sections:
+  - id: core_views
+    title: 核心观点
+    kind: views
+    n_views: 4
+    view_style: |
+      每条观点 = 结论式小标题（8~15字，判断句）+ 一段论述（100~180字）。
+      论述中每个数字都必须来自提供的事实切片，禁止编造或外推任何数值。
+      文风对标范文：客观陈述 + 数据支撑 + 因果解释，不用感叹号，不堆形容词。
+    check:
+      heading_len: [6, 20]
+      body_len: [80, 230]
+    fewshot: |
+      【范文节选】（国信证券《Q2油脂盈利弹性加速兑现，定增审核通过打开未来成长空间》）
+      收入温和增长，利润增长主要由毛利率修复驱动。2026H1公司实现营业收入7.35亿元，
+      同比增长2.62%；归母净利润0.65亿元，同比增长60.47%。从利润表拆分看，公司H1
+      毛利润约2.14亿元，同比增加约0.42亿元；综合毛利率29.15%，同比提升5.11pct。
+      与此同时，财务费用由0.63亿元下降至0.56亿元，同比下降10.60%，也是利润改善的
+      重要贡献。
+      自产油脂比例提升带动毛利率大幅改善。分业务看，2026H1公司油脂产品加工和销售
+      收入3.61亿元，同比下降2.46%，但营业成本同比大幅下降20.90%，毛利率达到39.51%，
+      同比提升14.10pct，主要系公司主动降低低附加值外采贸易油业务、提高自产油脂占比
+      所致。
+    view_slots:
+      - id: overall_performance
+        brief: 整体业绩拆解。收入、归母净利及同比，毛利率及变动，财务费用变化；
+               点出利润增长的主要驱动（毛利率修复 or 费用下降 or 其他）。
+        data_needs: [quote_snapshot, financial_periods]
+        fallback: [fin:latest:8]
+      - id: business_breakdown
+        brief: 分业务拆解。挑毛利率最高/变动最大的 2~3 个业务，引用各业务收入、
+               占比、毛利率及变动，解释变动原因（结合公告与新闻素材）。
+        data_needs: [business_composition]
+        fallback: [mainop:by_product:3]
+      - id: industry_outlook
+        brief: 行业景气与催化。优先用募集说明书等行业公告的行业章节摘要、行业新闻
+               提炼行业价格趋势或政策催化（可引用其编号）；仅有公司素材时降级为
+               公司层面的经营亮点叙述。
+        data_needs: [industry_news, long_announcement_digest]
+        fallback: [newsind:top:5]
+      - id: catalyst
+        brief: 事件催化与成长空间。从关键公告（定增/收购/扩产）提炼事件进展
+               及其对资本结构、产能的影响。
+        data_needs: [catalyst_announcements]
+        fallback: [ann:catalyst:3]
+
+  - id: earnings_forecast
+    title: 盈利预测与估值
+    kind: table
+    table: earnings_forecast
+    style: |
+      表格由系统从一致预期数据直接生成，正文所有预测数字以表格为准。
+      你只写一段 80~150 字的说明文字：结合最新业绩，点出预测期归母净利润
+      趋势与对应 PE，落脚到估值判断，说明评级逻辑；文字中引用的数字必须
+      与表格一致。
+    check:
+      body_len: [60, 200]
+
+  - id: risk_warning
+    title: 风险提示
+    kind: risk
+    strategy: mirror
+    style: |
+      写 3~5 条风险提示，每条 10~20 字、以"XX风险"结尾、用分号分隔成一行。
+      生成方法（镜像法）：逐条审视核心观点——每条观点依赖的关键假设的反面
+      就是风险。如"定增打开成长空间"镜像出"产能扩张不及预期风险"；
+      "油脂业务高毛利驱动业绩"镜像出"油脂价格波动风险"；
+      "境外收入占比高"镜像出"汇率波动风险"。
+      再补充：公告披露的公司特有风险（诉讼/担保/减值）与政策风险。
+      要求：核心观点的镜像风险必须覆盖，再补公告特有风险。
+      范例："产能扩张不及预期风险；UCO出口价格波动风险；政策调整风险；汇率波动风险。"
+    check:
+      count: [3, 5]
+      item_suffix: 风险
+      min_shaped: 3
+
+tables:
+  - id: earnings_forecast
+    renderer: consensus_pe
+    columns: [指标, 今年, 明年, 后年]
+
+writing_rules:
+  - 正文数字必须能在事实切片中找到出处，对账层将逐一对账
+  - 禁止对事实数字做任何计算——合计、倍数、差值、占比推导等一律不得出现
+    （如不得写"A约为B的2.71倍"或"两项合计28.41亿元"），只能原样引用事实切片中的数字
+  - 每个数字保留事实切片中的原始精度（如 7.3538 亿美元可写 7.35 亿元，但不可改成别的值）
+  - 同比变化优先用 pct 口径（"同比+60.47%"），毛利率变动用 pct（"同比提升5.11pct"）
+  - 禁止出现事实切片之外的公司名、政策名、产品名（可用素材原文中的专有名词）
+  - 不写"我们认为""我们维持"等卖方第一人称（评级句由系统模板生成）
+
+forbidden_words: [我们认为, 我们维持, 我司, 笔者, 推荐买入, ！]
+
+controlled_vocab:
+  rating: [买入, 增持, 中性, 减持, 卖出, 未评级]
+
+# 派生校验规则开关（validate.py 内置实现；股票场景专属，其他模板按需启用）
+check_rules:
+  - pe_ttm_suspect
+  - pe_spread
+  - pe_vs_consensus
+
+# judge 对标范文（模板级；M7 起部门 profile 可覆盖）
+judge_reference: config/reference/company_review_guosen_000803.md
+
+disclaimer: |
+  本报告由 EvidenceCraft 系统自动生成，评级为规则推算结果，所有数字溯源自公开数据
+  （东方财富数据接口），仅供技术研究使用，不构成任何投资建议。
+
+# 行业新闻扫描关键词已迁至部门 profile（config/departments/stock_demo/
+# profile.yaml 的 vocabulary）——M7 起结构（spec）与资源（profile）正交。

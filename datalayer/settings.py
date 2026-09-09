@@ -23,12 +23,30 @@ class Settings:
         self.cache: dict = cfg["cache"]
         self.artifacts_dir: str = cfg["artifacts_dir"]
         self.model: dict = cfg.get("model", {})
-        self.databases: dict = cfg.get("databases", {})   # db_ref → 连接配置（M7）
-        self.rag: dict = cfg.get("rag", {})               # 外部检索服务配置（M7）
+        self.pipeline: dict = cfg.get("pipeline", {})     # 流水线参数（judge 门槛/修订轮数）
+        self.databases: dict = cfg.get("databases", {})   # 全局连接：数据库（凭据只放本文件）
+        self.rag: dict = cfg.get("rag", {})               # 全局连接：外部检索服务
 
     def resolve(self, p: str) -> Path:
         path = Path(p)
         return path if path.is_absolute() else _ROOT / path
+
+
+def update_sections(sections: dict) -> None:
+    """写回 settings.yaml 的若干顶层段（ruamel 往返保注释）；写完由调用方 reload。"""
+    from ruamel.yaml import YAML
+
+    path = _ROOT / "config" / "settings.yaml"
+    ry = YAML()
+    ry.preserve_quotes = True
+    with open(path, encoding="utf-8") as f:
+        cfg = ry.load(f)
+    for key, value in sections.items():
+        cfg[key] = value
+    tmp = path.with_suffix(".yaml.tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        ry.dump(cfg, f)
+    tmp.replace(path)
 
 
 def mask_key(key: str) -> str:

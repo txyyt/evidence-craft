@@ -1,0 +1,28 @@
+[
+  {
+    "role": "user",
+    "text": "把报告说明 description 改为：浏览器全流程验收用临时类型（自动生成）",
+    "ts": "2026-09-09T01:23:02"
+  },
+  {
+    "role": "assistant",
+    "text": "已按要求更新 description。",
+    "ops": [
+      {
+        "op": "set",
+        "path": "description",
+        "value": "浏览器全流程验收用临时类型（自动生成）"
+      }
+    ],
+    "diff": [
+      {
+        "op": "change",
+        "path": "description",
+        "before": "卖方个股研究报告/点评类报告，标题突出投资逻辑，正文以核心观点论述为主，辅以盈利预测、风险提示与数据溯源附录。",
+        "after": "浏览器全流程验收用临时类型（自动生成）"
+      }
+    ],
+    "error": null,
+    "ts": "2026-09-09T01:23:02"
+  }
+]

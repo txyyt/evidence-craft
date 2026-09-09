@@ -1,13 +1,15 @@
 """CLI 入口。
 
 用法：
-  python run_pipeline.py --data-only --stock 000803   # 只跑数据层
-  python run_pipeline.py --full --stock 000803        # 全流程：取数→大纲→分节→对账→渲染
-  python run_pipeline.py --full --stock 600519 \
-      --spec config/report_types/company_review.yaml  # 指定报告规格（v2）
+  python run_pipeline.py --data-only --type company_review --stock 000803
+  python run_pipeline.py --full --type company_review --stock 000803
+  python run_pipeline.py --full --type geology_demo_review --project GM-1 --period 2026H1
+
+--department 为 --type 的兼容别名。--spec 可显式覆盖报告结构文件（调试用）。
 
 progress 回调：每个阶段/每节完成时调用 progress(stage, message, data|None)，
-M8 前端的 SSE 层直接转发（本模块的 print 仅为 CLI 观察）。
+data 恒含 llm_calls / llm_seconds（本次运行累计）；server 层 SSE 直接转发。
+cancel_event 置位后在阶段边界干净退出（PipelineCancelled）。
 """
 
 import argparse
@@ -19,6 +21,10 @@ from typing import Callable
 from datalayer.settings import settings
 
 
+class PipelineCancelled(RuntimeError):
+    """用户取消（server 层捕获后标记运行状态）。"""
+
+
 def save(path: Path, payload) -> None:
     with open(path, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
@@ -26,46 +32,69 @@ def save(path: Path, payload) -> None:
 
 
 def main(argv: list[str] | None = None,
-         progress: Callable[[str, str, dict | None], None] | None = None) -> None:
+         progress: Callable[[str, str, dict | None], None] | None = None,
+         cancel_event=None) -> None:
     parser = argparse.ArgumentParser(description="EvidenceCraft 报告生成流水线")
-    parser.add_argument("--department", default="stock_demo",
-                        help="部门 profile 名（数据源绑定/词表/特性，默认 stock_demo）")
+    parser.add_argument("--type", "--department", dest="type_id",
+                        default="company_review",
+                        help="报告类型 id（config/report_types/<id>/，默认 company_review）")
     parser.add_argument("--stock", default=None, help="运行参数：股票代码")
     parser.add_argument("--project", default=None, help="运行参数：项目编号（地学等场景）")
     parser.add_argument("--period", default=None, help="运行参数：报告期次")
-    parser.add_argument("--spec", default=None, help="报告规格 v2 yaml 路径（缺省 company_review）")
+    parser.add_argument("--spec", default=None, help="报告结构 yaml 路径（覆盖报告类型缺省）")
     parser.add_argument("--data-only", action="store_true", help="只跑数据层")
     parser.add_argument("--full", action="store_true", help="全流程生成报告")
     args = parser.parse_args(argv)
 
     _progress = progress or (lambda *_: None)
+    from pipeline.llm import reset_stats, stats
+    reset_stats()
+    _stage_t0 = datetime.now().timestamp()
 
     def emit(stage: str, msg: str, data: dict | None = None) -> None:
+        nonlocal _stage_t0
+        now = datetime.now().timestamp()
+        payload = {"llm_calls": stats()["calls"],
+                   "llm_seconds": round(stats()["seconds"], 1),
+                   "stage_seconds": round(now - _stage_t0, 1)}
+        _stage_t0 = now
+        if data:
+            payload.update(data)
         print(msg)
-        _progress(stage, msg, data)
+        _progress(stage, msg, payload)
+
+    def check_cancel() -> None:
+        if cancel_event is not None and cancel_event.is_set():
+            raise PipelineCancelled("用户取消")
 
     from template_factory.schema import load_spec
-    spec = load_spec(args.spec)
-    from datalayer.registry import load_profile, run_department
-    profile = load_profile(args.department)
+    from datalayer import registry
 
-    # judge 对标范文解析链：模板级 → 部门级
-    if not spec.judge_reference and profile.get("judge_reference"):
-        spec.judge_reference = profile["judge_reference"]
+    type_dir = registry.type_dir(args.type_id)
+    if not registry.type_exists(args.type_id):
+        raise SystemExit(f"报告类型不存在：{args.type_id}")
+    sources = registry.load_sources(args.type_id)
+    spec_file = args.spec or str(registry.spec_path(args.type_id))
+    spec = load_spec(spec_file)
 
-    # stock 仅股票部门取 settings 缺省；地学等部门以 --project 为主参数
-    stock = args.stock or (settings.stock if args.department == "stock_demo" else None)
+    # judge 对标范文解析链：模板级 → 报告类型级
+    if not spec.judge_reference and sources.get("judge_reference"):
+        spec.judge_reference = sources["judge_reference"]
+
+    # stock 仅股票类报告取 settings 缺省；其余以 --project 为主参数
+    stock = args.stock or (settings.stock if args.type_id == "company_review" else None)
     run_params = {k: v for k, v in
                   {"stock": stock, "project": args.project,
                    "period": args.period}.items() if v is not None}
 
-    subject = run_params.get("project") or run_params.get("stock") or args.department
+    subject = run_params.get("project") or run_params.get("stock") or args.type_id
     run_dir = settings.resolve(settings.artifacts_dir) / \
         f"{subject}_{datetime.now():%Y%m%d_%H%M%S}"
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    emit("data", f"[1/6] 数据层：按部门 {args.department} 绑定拉取 {subject} 数据 ...")
-    doc, crosscheck = run_department(args.department, run_params)
+    emit("data", f"[1/6] 数据层：按报告类型「{sources.get('name', args.type_id)}」绑定拉取 {subject} 数据 ...")
+    check_cancel()
+    doc, crosscheck = registry.run_data_layer(args.type_id, run_params)
     save(run_dir / "facts.json", doc)
     if crosscheck:
         save(run_dir / "crosscheck_report.json", crosscheck)
@@ -88,25 +117,31 @@ def main(argv: list[str] | None = None,
     from render import html_report
 
     emit("outline", "[2/6] 大纲生成（标题 + 观点规划）...")
+    check_cancel()
     spec_outline = outline.build_outline(doc, spec)
     save(run_dir / "outline.json", spec_outline)
     emit("outline", f"  标题: {spec_outline['title']}",
          {"title": spec_outline["title"]})
     save(run_dir / "meta.json", {
-        "department": args.department, "params": run_params,
-        "spec": str(args.spec) if args.spec else "default:company_review",
+        "type_id": args.type_id,
+        "type_name": sources.get("name", args.type_id),
+        "template_fingerprint": registry.template_fingerprint(args.type_id),
+        "params": run_params,
+        "spec": "report.yaml" if not args.spec else str(args.spec),
         "created_at": datetime.now().isoformat(timespec="seconds"),
         "title": spec_outline["title"]})
 
     emit("sections", "[3/6] 分节生成（每条观点独立会话）...")
     written = []
     for i, view in enumerate(spec_outline["views"], 1):
+        check_cancel()
         s = sections.gen_view(doc, view, spec)
         written.append(s)
         emit("sections", f"  ({i}/{len(spec_outline['views'])}) {s['heading']}",
              {"slot_id": s["slot_id"], "heading": s["heading"]})
 
     emit("sections", "[4/6] 预测说明 + 风险提示（镜像核心观点）...")
+    check_cancel()
     forecast = sections.gen_forecast_note(doc, spec) if spec.section("table") \
         else {"body": "", "cited_fact_ids": []}
     risks = sections.gen_risks(doc, spec, views=written) if spec.section("risk") \
@@ -114,7 +149,9 @@ def main(argv: list[str] | None = None,
     save(run_dir / "sections.json", {"views": written,
                                      "forecast": forecast, "risks": risks})
 
-    emit("review", "[5/6] 对账 + 规则校验 + judge 评审（不合格退回重写，至多2轮）...")
+    emit("review", "[5/6] 对账 + 规则校验 + judge 评审（不合格退回重写，至多"
+                   f"{int((settings.pipeline or {}).get('revise_rounds', 2))} 轮）...")
+    check_cancel()
     rating = rule_rating(doc)
     report = reconcile.reconcile(doc, spec_outline, written, forecast, risks, spec)
     validate_report = validate.run(doc, spec_outline, written, forecast, risks,
@@ -135,8 +172,10 @@ def main(argv: list[str] | None = None,
             print(f"  [规则 {i['status']}] {i['rule']}: {i['detail']}")
 
     _print_status()
+    max_rounds = int((settings.pipeline or {}).get("revise_rounds", 2))
     round_no = 1
-    while judge_report["verdict"] != "pass" and round_no <= 2:
+    while judge_report["verdict"] != "pass" and round_no <= max_rounds:
+        check_cancel()
         issues = judge_report.get("issues") or []
         emit("review", f"  —— 第 {round_no} 轮修订（{len(issues)} 个问题）——")
         for it in issues:
@@ -166,8 +205,9 @@ def main(argv: list[str] | None = None,
           "reconcile": report["status"]})
 
     emit("render", "[6/6] 渲染 final.html ...")
+    check_cancel()
     chart = None
-    if (profile.get("features") or {}).get("kline_chart"):
+    if (sources.get("features") or {}).get("kline_chart"):
         from render.kline_chart import make_chart
         chart = make_chart("1.000001", run_dir / "index_kline.png")
         print(f"    头图已生成 {chart.name}")
@@ -177,7 +217,7 @@ def main(argv: list[str] | None = None,
     html_path = run_dir / "final.html"
     html_path.write_text(html, encoding="utf-8")
 
-    # docx 终稿（M8 规范简洁版）；渲染失败不影响流水线结果
+    # docx 终稿（规范简洁版）；渲染失败不影响流水线结果
     try:
         from render.docx_report import render_docx
         render_docx(doc, spec_outline, written, forecast, risks, spec,

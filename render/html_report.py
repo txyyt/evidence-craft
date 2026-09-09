@@ -40,6 +40,10 @@ TPL = """<!DOCTYPE html>
   .appendix td {{ text-align: left; }}
   .disclaimer {{ margin-top: 36px; font-size: 12px; color: #999;
                  border-top: 1px solid #ddd; padding-top: 12px; }}
+  @media print {{
+    body {{ max-width: none; padding: 0 12px; }}
+    img {{ max-height: 260px; }}
+  }}
 </style>
 </head>
 <body>

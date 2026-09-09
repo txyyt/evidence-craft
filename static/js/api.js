@@ -1,6 +1,8 @@
-/* fetch 封装：统一 JSON、错误提取（FastAPI 的 {detail}）。 */
+/* fetch 封装：统一 JSON、错误提取（FastAPI 的 {detail}）。
+   非破坏性初始化 EC 命名空间——icons/fielddict 可能先于本文件挂载。 */
 (function () {
-  window.EC = { views: {} };
+  window.EC = window.EC || {};
+  EC.views = EC.views || {};
 
   async function request(method, url, body) {
     const opts = { method, headers: {} };

@@ -22,7 +22,7 @@ import yaml
 
 from datalayer.settings import settings
 
-DEFAULT_SPEC_PATH = "config/report_types/company_review.yaml"
+DEFAULT_SPEC_PATH = "config/report_types/company_review/report.yaml"
 
 Kind = Literal["views", "table", "risk", "text", "figures"]
 

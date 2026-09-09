@@ -1,0 +1,422 @@
+[
+  {
+    "ts": "2026-09-09T02:19:14",
+    "sample": "山高环能研报样例.txt",
+    "rounds_used": 2,
+    "verdict": "PASS",
+    "title": "2026H1归母净利同比+60.47%毛利率修复兑现，定增获证监会注册批复打开成长空间，维持增持评级",
+    "n_facts": 62,
+    "length_ok": 4,
+    "length_total": 4,
+    "unknown_total": 0,
+    "detail": {
+      "length": [
+        {
+          "slot_id": "overall_performance",
+          "n_chars": 279,
+          "status": "ok",
+          "range": [
+            120,
+            520
+          ]
+        },
+        {
+          "slot_id": "segment_structure",
+          "n_chars": 330,
+          "status": "ok",
+          "range": [
+            120,
+            520
+          ]
+        },
+        {
+          "slot_id": "industry_drivers",
+          "n_chars": 301,
+          "status": "ok",
+          "range": [
+            120,
+            520
+          ]
+        },
+        {
+          "slot_id": "capital_catalysts",
+          "n_chars": 330,
+          "status": "ok",
+          "range": [
+            120,
+            520
+          ]
+        }
+      ],
+      "unknown_by_slot": {},
+      "cited_missing": {}
+    }
+  },
+  {
+    "ts": "2026-09-09T02:17:38",
+    "sample": "山高环能研报样例.txt",
+    "rounds_used": 2,
+    "verdict": "FAIL",
+    "title": "2026H1归母净利同比+60.47%盈利弹性兑现，定增获证监会注册批复打开产能成长空间",
+    "n_facts": 62,
+    "length_ok": 4,
+    "length_total": 4,
+    "unknown_total": 5,
+    "detail": {
+      "length": [
+        {
+          "slot_id": "overall_performance",
+          "n_chars": 248,
+          "status": "ok",
+          "range": [
+            120,
+            520
+          ]
+        },
+        {
+          "slot_id": "segment_structure",
+          "n_chars": 346,
+          "status": "ok",
+          "range": [
+            120,
+            520
+          ]
+        },
+        {
+          "slot_id": "industry_drivers",
+          "n_chars": 379,
+          "status": "ok",
+          "range": [
+            120,
+            520
+          ]
+        },
+        {
+          "slot_id": "capital_catalysts",
+          "n_chars": 286,
+          "status": "ok",
+          "range": [
+            120,
+            520
+          ]
+        }
+      ],
+      "unknown_by_slot": {
+        "core_views.segment_structure": [
+          11.0,
+          12.0,
+          13.0,
+          14.0
+        ],
+        "core_views.industry_drivers": [
+          22.0
+        ]
+      },
+      "cited_missing": {}
+    }
+  },
+  {
+    "ts": "2026-09-09T02:14:49",
+    "sample": "山高环能研报样例.txt",
+    "rounds_used": 2,
+    "verdict": "FAIL",
+    "title": "H1归母净利同比+60.47%剪刀差兑现，定增获证监会批复打开产能成长空间",
+    "n_facts": 60,
+    "length_ok": 4,
+    "length_total": 4,
+    "unknown_total": 3,
+    "detail": {
+      "length": [
+        {
+          "slot_id": "overall_performance",
+          "n_chars": 199,
+          "status": "ok",
+          "range": [
+            120,
+            520
+          ]
+        },
+        {
+          "slot_id": "segment_structure",
+          "n_chars": 323,
+          "status": "ok",
+          "range": [
+            120,
+            520
+          ]
+        },
+        {
+          "slot_id": "industry_drivers",
+          "n_chars": 405,
+          "status": "ok",
+          "range": [
+            120,
+            520
+          ]
+        },
+        {
+          "slot_id": "capital_catalysts",
+          "n_chars": 342,
+          "status": "ok",
+          "range": [
+            120,
+            520
+          ]
+        }
+      ],
+      "unknown_by_slot": {
+        "core_views.capital_catalysts": [
+          24.0,
+          26.0,
+          27.0
+        ]
+      },
+      "cited_missing": {}
+    }
+  },
+  {
+    "ts": "2026-09-09T02:03:39",
+    "sample": "山高环能研报样例.txt",
+    "rounds_used": 2,
+    "verdict": "FAIL",
+    "title": "H1归母净利同比+60.47%盈利弹性兑现，定增获证监会注册批复打开成长空间",
+    "n_facts": 60,
+    "length_ok": 4,
+    "length_total": 4,
+    "unknown_total": 1,
+    "detail": {
+      "length": [
+        {
+          "slot_id": "overall_performance",
+          "n_chars": 270,
+          "status": "ok",
+          "range": [
+            120,
+            520
+          ]
+        },
+        {
+          "slot_id": "segment_structure",
+          "n_chars": 349,
+          "status": "ok",
+          "range": [
+            120,
+            520
+          ]
+        },
+        {
+          "slot_id": "industry_drivers",
+          "n_chars": 295,
+          "status": "ok",
+          "range": [
+            120,
+            520
+          ]
+        },
+        {
+          "slot_id": "capital_catalysts",
+          "n_chars": 312,
+          "status": "ok",
+          "range": [
+            120,
+            520
+          ]
+        }
+      ],
+      "unknown_by_slot": {
+        "core_views.industry_drivers": [
+          22.0
+        ]
+      },
+      "cited_missing": {}
+    }
+  },
+  {
+    "ts": "2026-09-09T01:35:19",
+    "sample": "山高环能研报样例.txt",
+    "rounds_used": 3,
+    "verdict": "FAIL",
+    "title": "2026H1归母净利同比+60.47%呈现利润收入剪刀差，定增获证监注册批复（证监许可〔2026〕2190号）打开产能成长空间",
+    "n_facts": 60,
+    "length_ok": 4,
+    "length_total": 4,
+    "unknown_total": 1,
+    "detail": {
+      "length": [
+        {
+          "slot_id": "overall_performance",
+          "n_chars": 226,
+          "status": "ok",
+          "range": [
+            120,
+            520
+          ]
+        },
+        {
+          "slot_id": "segment_structure",
+          "n_chars": 306,
+          "status": "ok",
+          "range": [
+            120,
+            520
+          ]
+        },
+        {
+          "slot_id": "industry_drivers",
+          "n_chars": 335,
+          "status": "ok",
+          "range": [
+            120,
+            520
+          ]
+        },
+        {
+          "slot_id": "capital_catalysts",
+          "n_chars": 281,
+          "status": "ok",
+          "range": [
+            120,
+            520
+          ]
+        }
+      ],
+      "unknown_by_slot": {
+        "core_views.segment_structure": [
+          3.795
+        ]
+      },
+      "cited_missing": {}
+    }
+  },
+  {
+    "ts": "2026-09-09T01:33:08",
+    "sample": "山高环能研报样例.txt",
+    "rounds_used": 3,
+    "verdict": "FAIL",
+    "title": "2026H1归母净利同比+60.47%利润弹性兑现，定增获证监注册批复（证监许可〔2026〕2190号）打开产能成长空间——增持山高环能（000803）",
+    "n_facts": 60,
+    "length_ok": 4,
+    "length_total": 4,
+    "unknown_total": 4,
+    "detail": {
+      "length": [
+        {
+          "slot_id": "overall_performance",
+          "n_chars": 257,
+          "status": "ok",
+          "range": [
+            120,
+            520
+          ]
+        },
+        {
+          "slot_id": "segment_structure",
+          "n_chars": 318,
+          "status": "ok",
+          "range": [
+            120,
+            520
+          ]
+        },
+        {
+          "slot_id": "industry_drivers",
+          "n_chars": 356,
+          "status": "ok",
+          "range": [
+            120,
+            520
+          ]
+        },
+        {
+          "slot_id": "capital_catalysts",
+          "n_chars": 397,
+          "status": "ok",
+          "range": [
+            120,
+            520
+          ]
+        }
+      ],
+      "unknown_by_slot": {
+        "core_views.segment_structure": [
+          3.8
+        ],
+        "core_views.capital_catalysts": [
+          24.0,
+          26.0,
+          27.0
+        ]
+      },
+      "cited_missing": {}
+    }
+  },
+  {
+    "ts": "2026-09-09T01:30:49",
+    "sample": "山高环能研报样例.txt",
+    "rounds_used": 2,
+    "verdict": "FAIL",
+    "title": "H1归母净利同比+60.47%剪刀差凸显盈利修复，定增获证监注册批复（证监许可〔2026〕2190号）打开产能成长空间",
+    "n_facts": 60,
+    "length_ok": 0,
+    "length_total": 4,
+    "unknown_total": 11,
+    "detail": {
+      "length": [
+        {
+          "slot_id": "overall_performance",
+          "n_chars": 286,
+          "status": "near",
+          "range": [
+            140,
+            250
+          ]
+        },
+        {
+          "slot_id": "segment_structure",
+          "n_chars": 387,
+          "status": "out",
+          "range": [
+            140,
+            250
+          ]
+        },
+        {
+          "slot_id": "industry_drivers",
+          "n_chars": 400,
+          "status": "out",
+          "range": [
+            140,
+            250
+          ]
+        },
+        {
+          "slot_id": "capital_catalysts",
+          "n_chars": 318,
+          "status": "out",
+          "range": [
+            140,
+            250
+          ]
+        }
+      ],
+      "unknown_by_slot": {
+        "core_views.overall_performance": [
+          57.8
+        ],
+        "core_views.segment_structure": [
+          11.0,
+          12.0,
+          13.0,
+          14.0,
+          16.0,
+          17.0,
+          18.0,
+          19.0,
+          20.0,
+          3.795
+        ]
+      },
+      "cited_missing": {}
+    }
+  }
+]

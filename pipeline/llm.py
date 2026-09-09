@@ -15,12 +15,21 @@ from openai import OpenAI
 from datalayer.settings import settings
 
 _client: OpenAI | None = None
+_stats = {"calls": 0, "seconds": 0.0}
 
 
 def reset() -> None:
     """丢弃缓存的客户端——页面上改了模型配置后由 server 层调用。"""
     global _client
     _client = None
+
+
+def reset_stats() -> None:
+    _stats.update(calls=0, seconds=0.0)
+
+
+def stats() -> dict:
+    return dict(_stats)
 
 
 def client() -> OpenAI:
@@ -52,11 +61,15 @@ def chat_json(system: str, user: str, schema_hint: str,
     extra = {"reasoning_effort": m["reasoning_effort"]} \
         if m.get("reasoning_effort") else None
     budget = max_tokens
+    import time
     for attempt in range(3):
+        t0 = time.perf_counter()
         resp = client().chat.completions.create(
             model=m["model"], messages=messages,
             response_format={"type": "json_object"},
             max_tokens=budget, **({"extra_body": extra} if extra else {}))
+        _stats["calls"] += 1
+        _stats["seconds"] += time.perf_counter() - t0
         msg = resp.choices[0].message
         reasoning = getattr(msg, "reasoning_content", None) or ""
         text = (msg.content or "").strip()

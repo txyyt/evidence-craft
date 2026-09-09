@@ -1,0 +1,18 @@
+name: 流程验证用报告
+description: ''
+params_schema:
+  stock: stock
+vocabulary: {}
+features: {}
+crosschecks: []
+judge_reference: config/reference/company_review_guosen_000803.md
+bindings:
+- need: new_need
+  adapter: em_quote
+  params:
+    stock: $stock
+- need: consensus
+  adapter: em_consensus
+  params:
+    stock: $stock
+status: published

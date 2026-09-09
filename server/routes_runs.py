@@ -1,4 +1,4 @@
-"""生成监控路由：启动（线程 + SSE 进度）/ 历史 / 产物读取 / 报告下载。"""
+"""报告生成路由：启动（线程 + SSE 进度）/ 取消 / 数据预检 / 历史 / 产物 / 删除。"""
 
 import asyncio
 import json
@@ -15,11 +15,16 @@ router = APIRouter(prefix="/api/runs")
 
 
 class RunIn(BaseModel):
-    department: str = "stock_demo"
+    type_id: str = "company_review"
     stock: str | None = None
     project: str | None = None
     period: str | None = None
     spec: str | None = None
+
+
+class PreviewIn(BaseModel):
+    type_id: str
+    params: dict[str, str] = {}
 
 
 def _artifacts_root() -> Path:
@@ -39,19 +44,49 @@ def _safe_dir(dir_name: str) -> Path:
 
 @router.post("/start")
 async def start(body: RunIn) -> dict:
-    argv = ["--department", body.department, "--full"]
+    argv = ["--type", body.type_id, "--full"]
     if body.spec:
         argv += ["--spec", body.spec]
     for flag, v in (("--stock", body.stock), ("--project", body.project),
                     ("--period", body.period)):
         if v:
             argv += [flag, v]
-    task = bus.start_run(argv, body.department, asyncio.get_running_loop())
+    task = bus.start_run(argv, body.type_id, asyncio.get_running_loop())
     return {"id": task.id, "events_url": f"/api/runs/{task.id}/events"}
 
 
+@router.post("/preview")
+def preview(body: PreviewIn) -> dict:
+    """数据预检：只跑数据层（秒级），提前暴露缺参数/数据为空。"""
+    from datalayer import registry
+    try:
+        doc, crosscheck = registry.run_data_layer(body.type_id, body.params)
+    except FileNotFoundError as e:
+        return {"ok": False, "error": f"数据文件不存在：{e}"}
+    except Exception as e:  # noqa: BLE001 —— 预检就是把问题提前报出来
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+    warnings = doc["meta"].get("warnings") or []
+    return {"ok": len(doc["facts"]) > 0,
+            "n_facts": len(doc["facts"]),
+            "warnings": warnings,
+            "crosscheck": (crosscheck or {}).get("status") if crosscheck else None,
+            "sample": doc["facts"][:5],
+            "error": None if doc["facts"] else "所有绑定均未取到数据（检查参数与绑定）"}
+
+
+@router.post("/{run_id}/cancel")
+def cancel(run_id: str) -> dict:
+    t = bus.HUB.get(run_id)
+    if not t:
+        raise HTTPException(404, "运行不存在或服务已重启")
+    if t.status != "running":
+        return {"ok": False, "status": t.status}
+    t.cancel_event.set()
+    return {"ok": True}
+
+
 @router.get("")
-def history() -> list[dict]:
+def history(type_id: str | None = None) -> list[dict]:
     root = _artifacts_root()
     markers = ("meta.json", "outline.json", "facts.json",
                "judge_report.json", "final.html")
@@ -59,10 +94,23 @@ def history() -> list[dict]:
     if root.exists():
         for d in root.iterdir():
             if d.is_dir() and not d.name.startswith(".") \
+                    and not d.name.startswith("_") \
                     and any((d / m).exists() for m in markers):
-                out.append(bus.summarize(d))
+                entry = bus.summarize(d)
+                if type_id and entry.get("type_id") != type_id:
+                    continue
+                out.append(entry)
     out.sort(key=lambda x: x["mtime"], reverse=True)
     return out[:80]
+
+
+@router.delete("/{dir_name}")
+def delete_run(dir_name: str, delete_files: bool = True) -> dict:
+    d = _safe_dir(dir_name)
+    if delete_files:
+        import shutil
+        shutil.rmtree(d)
+    return {"ok": True}
 
 
 @router.get("/artifact")
@@ -95,16 +143,17 @@ def report(dir: str, format: str = "html") -> FileResponse:
 def run_status(run_id: str) -> dict:
     t = bus.HUB.get(run_id)
     if not t:
-        raise HTTPException(404, "运行不存在或服务已重启")
-    return {"id": t.id, "status": t.status, "department": t.department,
-            "run_dir": t.run_dir, "error": t.error}
+        raise HTTPException(404, "服务已重启，该次运行状态不可查（历史产物不受影响）")
+    return {"id": t.id, "status": t.status, "type_id": t.department,
+            "run_dir": t.run_dir, "error": t.error,
+            "error_detail": t.error_detail}
 
 
 @router.get("/{run_id}/events")
 async def events(run_id: str) -> StreamingResponse:
     t = bus.HUB.get(run_id)
     if not t:
-        raise HTTPException(404, "运行不存在或服务已重启")
+        raise HTTPException(404, "服务已重启，该次运行状态不可查（历史产物不受影响）")
     q = t.subscribe()
 
     async def gen():

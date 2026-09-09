@@ -1,14 +1,19 @@
-"""数据源注册表：按部门 profile 的绑定列表逐个调 adapter，汇总 facts_doc。
+"""数据源注册表：按报告类型的 sources.yaml 绑定列表逐个调 adapter，汇总 facts_doc。
 
-profile 形态（config/departments/{dept}/profile.yaml）：
-  bindings:
-    - {adapter: em_quote, params: {stock: $stock}}
-    - {adapter: em_peer,  params: {board_code: $ctx.board_code}}
+报告类型目录结构（config/report_types/<id>/）：
+  report.yaml   报告结构（Spec v2）
+  sources.yaml  数据来源与配置：{name, description, status, params_schema,
+                vocabulary, features, crosschecks, judge_reference, bindings}
+  versions/     report.yaml 版本留痕
+  samples/ parsed/ replay_history.json ...（工作区文件）
+
+绑定形态：bindings: [{need, adapter, params: {stock: $stock}}]
   $ 引用：$<运行参数> / $vocabulary.<键> / $ctx.<键>；解析失败的 binding
   跳过并记 warning（宁可显式缺口，不让模型猜）。
 """
 
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 import yaml
@@ -32,11 +37,78 @@ def _scan_adapters() -> dict[str, type[SourceAdapter]]:
 ADAPTERS = _scan_adapters()
 
 
-def load_profile(department: str) -> dict[str, Any]:
-    path = settings.resolve(f"config/departments/{department}/profile.yaml")
-    with open(path, encoding="utf-8") as f:
-        return yaml.safe_load(f)
+# ---------- 报告类型目录 ----------
 
+def type_dir(type_id: str) -> Path:
+    """校验 id 合法性并返回目录（不要求存在）。"""
+    if (not type_id or "/" in type_id or "\\" in type_id or ".." in type_id
+            or type_id.startswith(".")):
+        raise ValueError(f"非法报告类型 id：{type_id!r}")
+    return settings.resolve(f"config/report_types/{type_id}")
+
+
+def spec_path(type_id: str) -> Path:
+    return type_dir(type_id) / "report.yaml"
+
+
+def sources_path(type_id: str) -> Path:
+    return type_dir(type_id) / "sources.yaml"
+
+
+def type_exists(type_id: str) -> bool:
+    return sources_path(type_id).exists()
+
+
+def list_types() -> list[dict[str, Any]]:
+    root = settings.resolve("config/report_types")
+    out: list[dict[str, Any]] = []
+    if not root.exists():
+        return out
+    for d in sorted(p for p in root.iterdir() if p.is_dir()):
+        sp = sources_path(d.name)
+        if not sp.exists():
+            continue
+        src = load_sources(d.name)
+        out.append({
+            "id": d.name,
+            "name": src.get("name") or d.name,
+            "description": src.get("description", ""),
+            "status": src.get("status", "draft"),
+            "params": len(src.get("params_schema") or {}),
+            "bindings": len(src.get("bindings") or []),
+            "has_spec": spec_path(d.name).exists(),
+            "fingerprint": template_fingerprint(d.name),
+            "mtime": datetime.fromtimestamp(sp.stat().st_mtime)
+            .isoformat(timespec="seconds"),
+        })
+    return out
+
+
+def template_fingerprint(type_id: str) -> str | None:
+    """report.yaml 内容指纹（短），生成时钉入报告 meta 供追溯。"""
+    p = spec_path(type_id)
+    if not p.exists():
+        return None
+    import hashlib
+    return hashlib.sha256(p.read_bytes()).hexdigest()[:12]
+
+
+def load_sources(type_id: str) -> dict[str, Any]:
+    with open(sources_path(type_id), encoding="utf-8") as f:
+        return yaml.safe_load(f) or {}
+
+
+def save_sources(type_id: str, sources: dict[str, Any]) -> None:
+    with open(sources_path(type_id), "w", encoding="utf-8") as f:
+        yaml.dump(sources, f, allow_unicode=True, sort_keys=False)
+
+
+# 兼容别名（旧代码语义：department → 报告类型）
+def load_profile(type_id: str) -> dict[str, Any]:
+    return load_sources(type_id)
+
+
+# ---------- $ 引用解析 ----------
 
 def _resolve(value: Any, run_params: dict, vocabulary: dict,
              ctx: dict) -> tuple[bool, Any]:
@@ -83,38 +155,9 @@ def _resolve(value: Any, run_params: dict, vocabulary: dict,
     return False, None
 
 
-def test_binding(department: str, index: int,
-                 run_params: dict[str, Any]) -> dict[str, Any]:
-    """单绑定测试（M8 部门管理页）：按顺序累积执行至第 index 个绑定（保证
-    $ctx 依赖链，前置失败只影响 ctx 不阻塞），返回该绑定的结果摘要。"""
-    profile = load_profile(department)
-    bindings = profile.get("bindings") or []
-    if not (0 <= index < len(bindings)):
-        raise ValueError(f"绑定序号越界：{index}（共 {len(bindings)} 个）")
-    vocabulary = profile.get("vocabulary") or {}
-    ctx: dict[str, Any] = dict(run_params)
-    for binding in bindings[:index]:
-        cls = ADAPTERS.get(binding.get("adapter"))
-        if cls is None:
-            continue
-        resolved, ok = {}, True
-        for pk, pv in (binding.get("params") or {}).items():
-            good, v = _resolve(pv, run_params, vocabulary, ctx)
-            if not good:
-                ok = False
-                break
-            resolved[pk] = v
-        if ok:
-            try:
-                ctx.update(cls().fetch(resolved).ctx)
-            except Exception:  # noqa: BLE001 —— 前置失败不阻塞目标绑定
-                pass
-
-    binding = bindings[index]
-    key = binding.get("adapter")
-    cls = ADAPTERS.get(key)
-    if cls is None:
-        return {"ok": False, "adapter": key, "error": f"未注册的 adapter: {key}"}
+def _resolve_binding_params(binding: dict, run_params: dict, vocabulary: dict,
+                            ctx: dict) -> tuple[dict | None, list[str]]:
+    """单绑定 $ 解析；返回 (解析后参数|None, 缺参描述列表)。"""
     resolved, missing = {}, []
     for pk, pv in (binding.get("params") or {}).items():
         good, v = _resolve(pv, run_params, vocabulary, ctx)
@@ -122,51 +165,45 @@ def test_binding(department: str, index: int,
             resolved[pk] = v
         else:
             missing.append(f"{pk}={pv}")
-    if missing:
-        return {"ok": False, "adapter": key,
-                "error": f"缺参数（检查运行参数/词表/上游 ctx）：{missing}"}
-    try:
-        result: AdapterResult = cls().fetch(resolved)
-    except SourceError as e:
-        return {"ok": False, "adapter": key, "error": str(e)}
-    except Exception as e:  # noqa: BLE001 —— 测试端点把异常报给页面
-        return {"ok": False, "adapter": key, "error": f"{type(e).__name__}: {e}"}
-    return {"ok": True, "adapter": key, "facts": len(result.facts),
-            "collections": list(result.collections),
-            "warnings": result.warnings,
-            "sample": result.facts[:3]}
+    return (resolved if not missing else None), missing
 
 
-def run_department(department: str, run_params: dict[str, Any]) -> tuple[dict, Any]:
-    """按部门 profile 拉数 → (facts_doc, crosscheck|None)。单源失败不阻塞。"""
-    profile = load_profile(department)
-    vocabulary = profile.get("vocabulary") or {}
+def _resolve_all(binding_list: list[dict], run_params: dict, vocabulary: dict,
+                 ctx: dict, upto: int | None = None) -> dict[str, Any]:
+    """顺序解析/执行绑定（$ctx 依赖链；单绑定失败记 warning 继续）；
+    upto 限制只执行到第几个绑定（单绑定测试用）。"""
     facts: list[dict[str, Any]] = []
     collections: dict[str, Any] = {}
-    meta: dict[str, Any] = {"department": department}
-    ctx: dict[str, Any] = dict(run_params)
+    meta: dict[str, Any] = {}
     warnings: list[str] = []
-
-    for binding in profile.get("bindings") or []:
+    resolved_log: list[dict[str, Any]] = []
+    for i, binding in enumerate(binding_list):
+        if upto is not None and i > upto:
+            break
         key = binding.get("adapter")
         cls = ADAPTERS.get(key)
         if cls is None:
-            warnings.append(f"binding 未注册的 adapter: {key}")
+            warnings.append(f"binding[{i}] 未注册的 adapter: {key}")
             continue
-        resolved, ok = {}, True
-        for pk, pv in (binding.get("params") or {}).items():
-            good, v = _resolve(pv, run_params, vocabulary, ctx)
-            if not good:
-                warnings.append(f"binding {key} 缺参数 {pk}（{pv}），跳过")
-                ok = False
-                break
-            resolved[pk] = v
-        if not ok:
+        resolved, missing = _resolve_binding_params(binding, run_params,
+                                                    vocabulary, ctx)
+        if resolved is None:
+            warnings.append(f"binding[{i}] {key} 缺参数（检查运行参数/词表/上游 ctx）："
+                            f"{missing}")
+            resolved_log.append({"index": i, "adapter": key,
+                                 "ok": False, "missing": missing})
             continue
         try:
             result: AdapterResult = cls().fetch(resolved)
         except SourceError as e:
-            warnings.append(f"{key} 失败: {e}")
+            warnings.append(f"binding[{i}] {key} 失败: {e}")
+            resolved_log.append({"index": i, "adapter": key, "ok": False,
+                                 "error": str(e)})
+            continue
+        except Exception as e:  # noqa: BLE001 —— 单源失败不阻塞
+            warnings.append(f"binding[{i}] {key} 异常: {type(e).__name__}: {e}")
+            resolved_log.append({"index": i, "adapter": key,
+                                 "ok": False, "error": f"{type(e).__name__}: {e}"})
             continue
         for f in result.facts:
             f.setdefault("reliability", cls.default_reliability)
@@ -175,16 +212,58 @@ def run_department(department: str, run_params: dict[str, Any]) -> tuple[dict, A
         ctx.update(result.ctx)
         meta.update(result.meta)
         warnings.extend(result.warnings)
+        resolved_log.append({"index": i, "adapter": key, "ok": True,
+                             "resolved": resolved, "n_facts": len(result.facts)})
+    return {"facts": facts, "collections": collections, "meta": meta,
+            "warnings": warnings, "resolved_log": resolved_log}
 
+
+def run_data_layer(type_id: str, run_params: dict[str, Any]) -> tuple[dict, Any]:
+    """按报告类型绑定取数 → (facts_doc, crosscheck|None)。单源失败不阻塞。"""
+    src = load_sources(type_id)
+    summary = _resolve_all(src.get("bindings") or [], run_params,
+                           src.get("vocabulary") or {}, dict(run_params))
+    meta = {"type_id": type_id, **summary["meta"]}
     meta.update({
-        "stock": run_params.get("stock") or run_params.get("project") or department,
+        "stock": run_params.get("stock") or run_params.get("project") or type_id,
         "generated_at": datetime.now().isoformat(timespec="seconds"),
-        "warnings": warnings,
+        "warnings": summary["warnings"],
     })
-    doc = {"meta": meta, "facts": facts, "collections": collections}
+    doc = {"meta": meta, "facts": summary["facts"],
+           "collections": summary["collections"]}
 
     crosscheck = None
-    if "financial_dual_source" in (profile.get("crosschecks") or []):
+    if "financial_dual_source" in (src.get("crosschecks") or []):
         from datalayer.assemble import check_financial
         crosscheck = check_financial(run_params["stock"])
     return doc, crosscheck
+
+
+# 兼容别名
+def run_department(type_id: str, run_params: dict[str, Any]) -> tuple[dict, Any]:
+    return run_data_layer(type_id, run_params)
+
+
+def test_binding(type_id: str, index: int,
+                 run_params: dict[str, Any]) -> dict[str, Any]:
+    """单绑定测试（报告类型管理页）：按顺序累积执行至第 index 个绑定（保证
+    $ctx 依赖链，前置失败只影响 ctx 不阻塞），返回该绑定的结果摘要，
+    含解析后的实际参数（resolved）。"""
+    src = load_sources(type_id)
+    bindings = src.get("bindings") or []
+    if not (0 <= index < len(bindings)):
+        raise ValueError(f"绑定序号越界：{index}（共 {len(bindings)} 个）")
+    summary = _resolve_all(bindings, run_params, src.get("vocabulary") or {},
+                           dict(run_params), upto=index)
+    entry = summary["resolved_log"][-1] if summary["resolved_log"] else None
+    if entry is None or entry.get("index") != index:
+        binding = bindings[index]
+        return {"ok": False, "adapter": binding.get("adapter"),
+                "error": "目标绑定未能执行（前置异常）"}
+    entry["warnings"] = [w for w in summary["warnings"]
+                         if w.startswith(f"binding[{index}]")]
+    if entry.get("ok"):
+        cls = ADAPTERS[bindings[index].get("adapter")]
+        entry["sample"] = summary["facts"][:3]
+        entry["reliability"] = cls.default_reliability
+    return entry

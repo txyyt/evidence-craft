@@ -132,7 +132,10 @@ issues 仅在 fail 时给出，target 必须用上述取值。""")
     total = sum(d["score"] for d in scores.values())
     out["total"] = total if total else out.get("total", 0)
     min_score = min((d["score"] for d in scores.values()), default=0)
-    out["verdict"] = "pass" if (out["total"] >= 36 and min_score > 4) else "fail"
+    # 通过门槛可在 settings.yaml 的 pipeline.judge_threshold 配置（默认 36）
+    threshold = int((settings.pipeline or {}).get("judge_threshold", 36))
+    out["verdict"] = "pass" if (out["total"] >= threshold and min_score > 4) else "fail"
+    out["threshold"] = threshold
 
     # 对账兜底（代码级强制）：存在未匹配数字的节必须 FAIL——评审不得主观放过
     dirty = [c for c in reconcile_report["checks"] if c["unknown_numbers"]]

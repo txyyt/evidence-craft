@@ -267,10 +267,16 @@ def gen_view(doc: dict[str, Any], view: dict[str, Any],
 
 def forecast_table(doc: dict[str, Any], tpl: Any = None) -> str:
     """consensus_pe 渲染器：一致预期 EPS 均值 + 现价推算 PE（LLM 不碰数字）。"""
+    consensus = doc["collections"].get("consensus")
+    if not consensus or not consensus.get("mean_eps_forecast"):
+        raise ValueError(
+            "该报告结构的盈利预测表使用 consensus_pe 渲染器，需要券商一致预期数据"
+            "（consensus），但本次运行未取到——请在报告类型的\"数据来源\"中添加"
+            " em_consensus 绑定，或将该章节表格改为 generic_rows 渲染器")
     q = {f["id"].split(".")[1]: f["value"] for f in doc["facts"]
          if f["id"].startswith("quote.")}
     price = q.get("price")
-    mean = doc["collections"]["consensus"].get("mean_eps_forecast", {})
+    mean = consensus.get("mean_eps_forecast", {})
     rows = []
     for label, key in (("今年", "predictThisYearEps"),
                        ("明年", "predictNextYearEps"),

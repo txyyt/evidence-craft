@@ -1,0 +1,150 @@
+report_type: equity_research_note
+version: 2
+description: 卖方个股研究报告/点评类报告，标题突出投资逻辑，正文以核心观点论述为主，辅以盈利预测、风险提示与数据溯源附录。
+writer_role: 资深报告撰写人
+title_style: 主标题为单句结论式观点题，含事件催化与投资判断，如“Q2油脂盈利弹性加速兑现，定增获证监会注册批复打开成长空间”；二级标题为功能模块名，如“核心观点”“盈利预测与估值”“风险提示”“附：数据溯源”。
+title_check:
+  title_len: null
+  require_comma: null
+  heading_len: null
+  body_len: null
+  count: null
+  item_suffix: null
+  min_shaped: null
+sections:
+- id: core_views
+  title: 核心观点
+  kind: views
+  style: null
+  fewshot: null
+  check:
+    title_len: null
+    require_comma: null
+    heading_len: null
+    body_len:
+    - 140
+    - 250
+    count: null
+    item_suffix: null
+    min_shaped: null
+  n_views: 4
+  view_slots:
+  - id: overall_performance
+    brief: 总结式呈现公司整体经营业绩：以营收、归母净利润及同比增速为核心数据，突出收入与利润增速的剪刀差，并补充毛利率、ROE、每股收益等盈利质量指标，最后归因于毛利率修复。
+    data_needs:
+    - 营收利润
+    - 盈利质量
+    fallback: []
+    fewshot: 2026年上半年公司实现营业收入7.35亿元，同比增长2.62%；归母净利润0.65亿元，同比增长60.47%，利润增速显著高于收入增速，呈现明显的剪刀差。盈利质量同步改善：综合毛利率为29.15%，加权平均净资产收益率为4.4%，基本每股收益为0.14元。
+  - id: segment_structure
+    brief: 分产品与分地区拆解收入结构：用各业务收入占比与毛利率对比论证油脂业务的高毛利引擎地位，再用区域毛利率对比说明境外贡献较高毛利，论证收入与利润协同。
+    data_needs:
+    - 收入占比
+    - 分部毛利率
+    fallback: []
+    fewshot: 分产品看，油脂产品加工和销售收入3.6114亿元，占比49.1096%，毛利率39.5148%，显著高于供暖业务的29.3704%和环保无害化处理的10.0572%，是公司盈利核心引擎，三大主业形成收入与利润协同。
+  - id: industry_drivers
+    brief: 阐述行业景气度向业绩的传导逻辑：引用募集说明书扣非净利增速及价格上涨、自产比例提升等驱动因素，说明工业级混合油的应用前景，并提示价格波动风险。论证结构为'驱动归因+行业逻辑+风险提示'。
+    data_needs:
+    - 扣非增速
+    - 产品价格
+    - 风险因素
+    fallback: []
+    fewshot: 据募集说明书披露，公司扣除非经常性损益的净利润同比增长54.74%、43.96%，主要系工业级混合油市场价格上涨、自产油脂比例提升、标准化体系建设提升运营效率及降本增效成果显著等综合原因导致。
+  - id: capital_catalysts
+    brief: 描述资本运作进展与未来增量：陈述定增获批的批复文号、发行规模上限，说明产能释放与资金支持的逻辑，补充外延收购事项及其不确定性，形成'事件+影响+风险'结构。
+    data_needs:
+    - 定增批复
+    - 产能规划
+    - 收购事项
+    fallback: []
+    fewshot: 公司近日收到中国证监会《关于同意山高环能集团股份有限公司向特定对象发行股票注册的批复》（证监许可〔2026〕2190号），本次发行数量不超过127,261,793股、不超过发行前总股本的30%。
+  view_style: 各观点段自带加粗小标题式的主题句（'指标+判断'双词组形态），单段150-250字，一段一个独立观点。论证结构多为'数据陈述→对比/归因→定性结论'，部分段落含风险提示收尾。语气客观精炼，数据密集，定性判断均由数据支撑，为典型的研报观点段风格。
+  table: null
+  strategy: null
+- id: earnings_forecast_valuation
+  title: 盈利预测与估值
+  kind: table
+  style: 以客观数据陈述为主，先列示一致预期EPS与对应PE，再结合最新业绩（如归母净利润同比增速）说明盈利弹性与估值逐年消化的逻辑，末句点明评级逻辑（盈利修复趋势延续、动态估值消化路径清晰），语言简洁、不含主观夸张表述。
+  fewshot: null
+  check:
+    title_len: null
+    require_comma: null
+    heading_len: null
+    body_len: null
+    count: null
+    item_suffix: null
+    min_shaped: null
+  n_views: null
+  view_slots: []
+  view_style: null
+  table: earnings_forecast_valuation_table
+  strategy: null
+- id: risk_warning
+  title: 风险提示
+  kind: risk
+  style: 按固定清单逐项列举风险，条目之间以中文分号；分隔，每条为简短短语（8-15字），结尾统一为'风险'，最后一条以句号结束。范例：'油脂价格波动风险；定增募投产能释放不及预期风险；收购标的诉讼风险；对外担保风险。'
+  fewshot: null
+  check:
+    title_len: null
+    require_comma: null
+    heading_len: null
+    body_len: null
+    count:
+    - 3
+    - 6
+    item_suffix: 风险
+    min_shaped: 3
+  n_views: null
+  view_slots: []
+  view_style: null
+  table: null
+  strategy: enumerate
+- id: data_traceability
+  title: 附：数据溯源
+  kind: text
+  style: null
+  fewshot: null
+  check:
+    title_len: null
+    require_comma: null
+    heading_len: null
+    body_len: null
+    count: null
+    item_suffix: null
+    min_shaped: null
+  n_views: null
+  view_slots: []
+  view_style: null
+  table: null
+  strategy: null
+tables:
+- id: earnings_forecast_valuation_table
+  renderer: consensus_pe
+  columns:
+  - 指标
+  - 今年
+  - 明年
+  - 后年
+writing_rules:
+- 标题采用[H1]/[H2]层级结构，标题可含关键数字与结论
+- 同比表述用'同比增长X.XX%'或简写'同比+X.XX%'，增速保留两位小数
+- 金额单位为亿元，保留原始精度（如7.3538亿元），正文摘要有两位小数（7.35亿元）
+- 比例类指标（毛利率、ROE、占比）保留4位小数或按原文精度（如29.15%、39.5148%）
+- EPS、PE等预测值按'N家券商预测均值'一致预期口径，并注明计算现价
+- 专有名词（公司名、行业名、监管文号）须与来源一致，监管文件引用含文号（如证监许可〔2026〕2190号）
+- 每条事实须可溯源，文末附数据溯源表，含事实编号、指标、值、来源、截至时间
+- 风险提示以分号分隔的短语列表结尾
+- 评级结论基于盈利与估值路径描述，不使用主观煽动性措辞
+- 预测表格字段使用'今年/明年/后年'相对时间表述
+forbidden_words:
+- 我
+- 我们
+- 本人
+- ！
+- ！
+controlled_vocab: {}
+check_rules: []
+judge_reference: null
+disclaimer: null
+industry_keywords: []
