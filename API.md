@@ -80,7 +80,7 @@ SSE 事件协议：`{type: progress|end, stage, message, data|None, ts}`，end �
 | `GET/PUT /api/settings/model` · `POST .../test` | 模型配置（api_key 只写不回显）；PUT 热生效；test → `{ok, latency_s, reply\|error}` |
 | `GET/PUT /api/settings/pipeline` | `judge_threshold`（默认 36）/ `revise_rounds`（默认 2），judge 与流水线消费 |
 | `GET/PUT /api/sources/connections` · `POST /test/database` · `POST /test/rag` | 全局连接（databases/rag）；SQLite 只读连通；RAG mock/live 探测 |
-| `GET /api/sources/adapters` | 适配器注册表 `[{key, kind, reliability}]` |
+| `GET /api/sources/adapters` | 适配器注册表 `[{key, kind, reliability, summary, param_schema, ctx_keys}]`——summary/param_schema/ctx_keys 为适配器类自声明（参数表单、$ctx 提示与顺序校验的数据源） |
 | `GET/POST /api/types` · `GET/PUT .../sources` · `POST /{id}/status` · `POST /{id}/copy` · `DELETE /{id}` | 报告类型 CRUD + 状态机（draft→verified 需最近回放通过；verified→published 需有 report.yaml） |
 | `POST /api/types/load-demo` | 从 `config/demo_types/` 载入演示报告类型（已存在则跳过） |
 | `POST /api/types/{id}/extract`（multipart files[]） | `extract.run()` 线程执行 → `{job_id, events_url}`；样例与解析缓存写入类型目录 |

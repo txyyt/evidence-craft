@@ -19,6 +19,7 @@ from datalayer.settings import settings
 class SQLiteAdapter(SourceAdapter):
     key = "sqlite_query"
     kind = "database"
+    summary = "SQLite 查询：命名参数 SQL 模板 → 事实（连接在系统设置配置）"
 
     def fetch(self, params: dict[str, Any]) -> AdapterResult:
         db_ref = params["db_ref"]

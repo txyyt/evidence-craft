@@ -58,6 +58,7 @@ class RagAdapter(SourceAdapter):
     key = "rag_client"
     kind = "rag"
     default_reliability = "retrieved"
+    summary = "检索片段抽数：LLM 抽取 + 原文对账（无出处的数字直接丢弃）"
 
     def fetch(self, params: dict[str, Any]) -> AdapterResult:
         from pipeline.llm import chat_json

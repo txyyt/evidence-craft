@@ -18,7 +18,7 @@ class Settings:
         with open(_ROOT / "config" / "settings.yaml", encoding="utf-8") as f:
             cfg: dict[str, Any] = yaml.safe_load(f)
         self.raw = cfg
-        self.stock: str = cfg["stock"]
+        self.stock: str = cfg.get("stock", "")           # 旧版 CLI 缺省对象，可选
         self.http: dict = cfg["http"]
         self.cache: dict = cfg["cache"]
         self.artifacts_dir: str = cfg["artifacts_dir"]

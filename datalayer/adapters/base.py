@@ -29,6 +29,9 @@ class SourceAdapter:
     key: str = ""
     kind: str = ""                      # local_file | database | rag | web
     default_reliability: str = "authoritative"
+    summary: str = ""                   # 一句话中文说明（界面下拉/卡片展示）
+    param_schema: list[dict] = []       # 参数声明：{k,label,ph,hint,required,type}
+    ctx_keys: list[str] = []            # fetch 产出的 ctx 键（供下游 $ctx 引用）
 
     def fetch(self, params: dict[str, Any]) -> AdapterResult:
         raise NotImplementedError

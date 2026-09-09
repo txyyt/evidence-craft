@@ -82,7 +82,7 @@ def main(argv: list[str] | None = None,
         spec.judge_reference = sources["judge_reference"]
 
     # stock 仅股票类报告取 settings 缺省；其余以 --project 为主参数
-    stock = args.stock or (settings.stock if args.type_id == "company_review" else None)
+    stock = args.stock or (settings.stock if args.type_id == "company_review" else None) or None
     run_params = {k: v for k, v in
                   {"stock": stock, "project": args.project,
                    "period": args.period}.items() if v is not None}

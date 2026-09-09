@@ -19,6 +19,9 @@ def _now() -> str:
 class EMQuoteAdapter(SourceAdapter):
     key = "em_quote"
     kind = "web"
+    summary = "行情快照：现价/市盈率TTM/市净率/总市值等（另带公司名称与行业）"
+    param_schema = [{"k": "stock", "label": "股票代码",
+                     "ph": "如 000803，一般填 $stock", "required": True}]
 
     def fetch(self, params: dict[str, Any]) -> AdapterResult:
         q = quote.fetch(params["stock"])
@@ -41,6 +44,10 @@ class EMQuoteAdapter(SourceAdapter):
 class EMFinancialAdapter(SourceAdapter):
     key = "em_financial"
     kind = "web"
+    summary = "财务摘要：营收/净利/同比/毛利率/ROE/EPS（近几期，另带 periods 集合）"
+    param_schema = [{"k": "stock", "label": "股票代码",
+                     "ph": "如 000803，一般填 $stock", "required": True}]
+    ctx_keys = ["board_code"]           # 所属板块代码，供 em_peer 引用
 
     def fetch(self, params: dict[str, Any]) -> AdapterResult:
         periods = financial.latest_periods(params["stock"])
@@ -72,6 +79,10 @@ class EMFinancialAdapter(SourceAdapter):
 class EMPeerAdapter(SourceAdapter):
     key = "em_peer"
     kind = "web"
+    summary = "同行业上市公司对比列表（估值/涨幅等）"
+    param_schema = [{"k": "board_code", "label": "板块代码",
+                     "ph": "$ctx.board_code",
+                     "hint": "一般引用上游 em_financial 产出的 $ctx.board_code"}]
 
     def fetch(self, params: dict[str, Any]) -> AdapterResult:
         board = params.get("board_code")
@@ -82,6 +93,9 @@ class EMPeerAdapter(SourceAdapter):
 class EMAnnouncementAdapter(SourceAdapter):
     key = "em_announcement"
     kind = "web"
+    summary = "关键公告标题、原文与行业摘要段落"
+    param_schema = [{"k": "stock", "label": "股票代码",
+                     "ph": "如 000803，一般填 $stock", "required": True}]
 
     def fetch(self, params: dict[str, Any]) -> AdapterResult:
         anns = announcement.fetch_key_with_content(params["stock"])
@@ -93,6 +107,10 @@ class EMAnnouncementAdapter(SourceAdapter):
 class EMIndustryNewsAdapter(SourceAdapter):
     key = "em_industry_news"
     kind = "web"
+    summary = "行业新闻列表（按关键词抓取）"
+    param_schema = [{"k": "keywords", "label": "关键词",
+                     "ph": "如 $vocabulary.industry_keywords",
+                     "hint": "一般引用词表里的关键词列表（解析后为数组）"}]
 
     def fetch(self, params: dict[str, Any]) -> AdapterResult:
         keywords = params.get("keywords") or []
@@ -103,6 +121,9 @@ class EMIndustryNewsAdapter(SourceAdapter):
 class EMConsensusAdapter(SourceAdapter):
     key = "em_consensus"
     kind = "web"
+    summary = "券商一致预期：今/明/后年 EPS 预测均值（盈利预测表的数据源）"
+    param_schema = [{"k": "stock", "label": "股票代码",
+                     "ph": "如 000803，一般填 $stock", "required": True}]
 
     def fetch(self, params: dict[str, Any]) -> AdapterResult:
         return AdapterResult(collections={"consensus": consensus.consensus(
@@ -112,6 +133,9 @@ class EMConsensusAdapter(SourceAdapter):
 class EMMainopAdapter(SourceAdapter):
     key = "em_mainop"
     kind = "web"
+    summary = "主营构成：各业务/产品的收入、成本与占比"
+    param_schema = [{"k": "stock", "label": "股票代码",
+                     "ph": "如 000803，一般填 $stock", "required": True}]
 
     def fetch(self, params: dict[str, Any]) -> AdapterResult:
         return AdapterResult(collections={"mainop": mainop.fetch(params["stock"])})
@@ -120,6 +144,9 @@ class EMMainopAdapter(SourceAdapter):
 class EMStatementsAdapter(SourceAdapter):
     key = "em_statements"
     kind = "web"
+    summary = "三大报表补充：经营现金流/财务费用/扣非净利（最新期）"
+    param_schema = [{"k": "stock", "label": "股票代码",
+                     "ph": "如 000803，一般填 $stock", "required": True}]
 
     def fetch(self, params: dict[str, Any]) -> AdapterResult:
         stmts = statements.fetch(params["stock"])
@@ -149,6 +176,9 @@ class EMStatementsAdapter(SourceAdapter):
 class EMNewsAdapter(SourceAdapter):
     key = "em_news"
     kind = "web"
+    summary = "公司新闻列表（标题/来源/时间）"
+    param_schema = [{"k": "stock", "label": "股票代码",
+                     "ph": "如 000803，一般填 $stock", "required": True}]
 
     def fetch(self, params: dict[str, Any]) -> AdapterResult:
         return AdapterResult(collections={"news": news.fetch(params["stock"])})

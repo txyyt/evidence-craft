@@ -18,6 +18,12 @@ class UsgsEarthquakeAdapter(SourceAdapter):
     产出事实：条数、最大震级及其条目。"""
     key = "usgs_earthquakes"
     kind = "web"
+    summary = "USGS 全球地震统计：指定震级与回溯天数，产出条数与最大地震"
+    param_schema = [
+        {"k": "min_magnitude", "label": "最小震级", "type": "number",
+         "ph": "4.5"},
+        {"k": "days", "label": "回溯天数", "type": "number", "ph": "30"},
+    ]
 
     def fetch(self, params: dict[str, Any]) -> AdapterResult:
         min_mag = float(params.get("min_magnitude", 4.5))

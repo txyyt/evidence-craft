@@ -56,6 +56,7 @@ class XlsxAdapter(SourceAdapter):
     """
     key = "xlsx_table"
     kind = "local_file"
+    summary = "Excel 台账：声明式列映射为事实（文件内改动会换来源指纹）"
 
     def fetch(self, params: dict[str, Any]) -> AdapterResult:
         path = _resolve_path(params["path"], params.get("pattern"))

@@ -88,6 +88,7 @@
 
         /* ---- 数据来源 ---- */
         const adapters = ref([]);
+        const adapterInfo = ref({});       // key -> {summary, param_schema, ctx_keys}
         const testResult = reactive({});
         const testing = reactive({});
         const runParams = reactive({});
@@ -375,11 +376,85 @@
 
         function addBinding() {
           cur.value.bindings = cur.value.bindings || [];
-          cur.value.bindings.push({ need: 'new_need', adapter: '', params: {} });
+          cur.value.bindings.push({ need: '', adapter: '', params: {} });
         }
 
+        /* 表单字段：前端富表单（sqlite/xlsx/rag）优先，其余用适配器自声明 */
         function bindingFields(b) {
-          return ADAPTER_FORMS[b.adapter] || null;
+          if (ADAPTER_FORMS[b.adapter]) return ADAPTER_FORMS[b.adapter];
+          const info = adapterInfo.value[b.adapter];
+          if (info && (info.param_schema || []).length)
+            return info.param_schema.map((f) => ({
+              k: f.k, label: f.label || f.k, required: !!f.required,
+              type: f.type || 'text', hint: f.hint || '', ph: f.ph || '',
+            }));
+          return null;
+        }
+        function adapterSummary(b) {
+          return (adapterInfo.value[b.adapter] || {}).summary || '';
+        }
+        function adapterCtxKeys(b) {
+          return (adapterInfo.value[b.adapter] || {}).ctx_keys || [];
+        }
+
+        /* ---- $ 引用：可用变量与插入 ---- */
+        function availableRefs(i) {
+          const c = cur.value;
+          if (!c) return [];
+          const refs = [];
+          Object.entries(c.params_schema || {}).forEach(([k, label]) =>
+            refs.push({ text: '$' + k, label: '生成参数 · ' + label }));
+          Object.keys(c.vocabulary || {}).forEach((k) =>
+            refs.push({ text: '$vocabulary.' + k, label: '词表 · ' + k }));
+          for (let j = 0; j < i; j++) {
+            const b = (c.bindings || [])[j] || {};
+            (adapterCtxKeys(b) || []).forEach((k) =>
+              refs.push({ text: '$ctx.' + k, label: '上游 #' + j + ' ' + (b.need || '') }));
+          }
+          const seen = new Set();
+          return refs.filter((r) => !seen.has(r.text) && seen.add(r.text));
+        }
+        function insertRef(b, k, text) {
+          b.params = b.params || {};
+          const v = String(b.params[k] ?? '').trim();
+          b.params[k] = (!v || /^\$[A-Za-z_][\w.]*$/.test(v)) ? text : v + text;
+        }
+
+        /* ---- $ctx 顺序校验：引用了下方/不存在的上游产出 → 提前报警 ---- */
+        function ctxWarnings(i, b) {
+          const c = cur.value;
+          if (!c) return [];
+          const producers = {};            // ctxKey -> 首个产出它的绑定序号
+          (c.bindings || []).forEach((bb, j) => {
+            (adapterCtxKeys(bb) || []).forEach((k) => {
+              if (!(k in producers)) producers[k] = j;
+            });
+          });
+          const above = new Set();
+          for (let j = 0; j < i; j++)
+            (adapterCtxKeys((c.bindings || [])[j] || {}) || []).forEach((k) => above.add(k));
+          const warns = [];
+          const text = Object.values(b.params || {})
+            .filter((v) => typeof v === 'string').join(' ');
+          for (const m of text.matchAll(/\$ctx\.([A-Za-z_][\w]*)/g)) {
+            const key = m[1];
+            if (above.has(key)) continue;
+            if (key in producers) {
+              const j = producers[key];
+              warns.push(`$ctx.${key} 由下方第 ${j} 条（${c.bindings[j].need || '未命名'}）产出——请把该条移到本条上方，否则生成时解析不到`);
+            } else {
+              warns.push(`没有任何绑定产出 $ctx.${key}，生成时该引用会解析失败`);
+            }
+          }
+          return warns;
+        }
+
+        /* 表单未覆盖的存量参数（兼容旧配置，不丢失） */
+        function extraParamKeys(b) {
+          const covered = new Set((bindingFields(b) || []).map((f) => f.k));
+          covered.add('value_columns');
+          covered.add('table_columns');
+          return Object.keys(b.params || {}).filter((k) => !covered.has(k));
         }
 
         function kvKeys(obj) { return Object.keys(obj || {}); }
@@ -466,8 +541,11 @@
         });
 
         onMounted(async () => {
-          adapters.value = (await EC.api.get('/api/sources/adapters'))
-            .map((a) => ({ label: `${a.key}（${a.kind}）`, value: a.key }));
+          const alist = await EC.api.get('/api/sources/adapters');
+          adapterInfo.value = Object.fromEntries(alist.map((a) => [a.key, a]));
+          adapters.value = alist.map((a) => ({
+            label: a.summary ? `${a.key} · ${a.summary}` : `${a.key}（${a.kind}）`,
+            value: a.key }));
           connections.value = await EC.api.get('/api/sources/connections');
           await loadList();
           const m = location.hash.match(/[?&]id=([A-Za-z0-9_]+)/);
@@ -484,12 +562,14 @@
           chatInput, chatting, pending, sendChat, applyPatch,
           leftSample, sampleTree, fewshotTarget, selectedText,
           loadSample, grabFewshot, startFewshotPick,
-          adapters, testResult, testing, runParams, connections,
-          addBinding, bindingFields, kvKeys, kvSet, kvAdd, kvDel, addValueColumn, testBinding,
+          adapters, adapterInfo, testResult, testing, runParams, connections,
+          addBinding, bindingFields, adapterSummary, adapterCtxKeys,
+          availableRefs, insertRef, ctxWarnings, extraParamKeys,
+          kvKeys, kvSet, kvAdd, kvDel, addValueColumn, testBinding,
           replaySample, replayRounds, dryParams, startReplay, startDryrun, verCols,
           ver, openVersions, runDiff, doRollback,
           newParamKey, addParamKey, kvNew, kvAddRow,
-          open, backToList, create, doCopy, doDelete, setStatus, saveSourcesOnly,
+          open, backToList, create, doCopy, doDelete, setStatus, saveSourcesOnly, watchTab,
           addSection, delSection, move, addSlot, syncViewsCount, tableOf,
           markDirty, saveStructure, startExtract,
           statusMeta, primaryAction, help, KIND_FIELDS,
@@ -770,43 +850,63 @@
           <!-- 数据来源 -->
           <n-tab-pane name="sources" tab="数据来源">
             <n-card size="small" class="ec-card">
+              <n-alert :bordered="false" type="info" size="small" style="margin-bottom:10px">
+                本页定义三件事：① 生成时要人填什么（生成参数）② 每类数据从哪取（绑定）
+                ③ 具体怎么取（适配器参数）。绑定从上到下依次执行，下方可引用上方产出（$ctx）。
+              </n-alert>
               <n-space size="small" align="center" style="margin-bottom:10px">
-                <span class="ec-dim">生成参数（生成时需要用户填什么，绑定里用 $参数名 引用）：</span>
+                <span class="ec-dim">生成参数（生成时用户要填什么，绑定里用 $参数名 引用）：</span>
                 <n-input v-for="(label, key) in cur.params_schema" :key="key"
                          :value="key + ' = ' + label" readonly size="small" style="width:180px" class="ec-mono" />
                 <n-input v-model:value="newParamKey" size="small" placeholder="新参数名（英文）" style="width:130px" />
                 <n-button size="tiny" @click="addParamKey">加参数</n-button>
               </n-space>
-              <n-space size="small" align="center" style="margin-bottom:10px">
-                <span class="ec-dim">judge 对标范文：</span>
-                <n-input v-model:value="cur.judge_reference" size="small" class="ec-mono"
-                         placeholder="config/reference/xxx.md（评审对标用，建议必配）" style="width:420px" />
-              </n-space>
-              <n-space size="small" align="center" style="margin-bottom:10px">
-                <span class="ec-dim">测试用运行参数：</span>
-                <n-input v-for="(label, key) in cur.params_schema" :key="'rp' + key"
-                         v-model:value="runParams[key]" :placeholder="label" size="small" style="width:130px" />
-              </n-space>
-              <n-space vertical size="small">
+              <n-empty v-if="!(cur.bindings || []).length" description="还没有数据绑定" size="small" style="margin:20px 0">
+                <template #extra>
+                  <div class="ec-muted" style="font-size:12px;max-width:480px;line-height:1.9;text-align:left">
+                    三步配好数据来源：<br>
+                    ① 对照样例报告，列出正文用到的数据类（行情、财务、行业对比……）<br>
+                    ② 每类数据加一条绑定：选数据源、按表单填参数<br>
+                    ③ 右上角填测试用参数，逐条点「测试」验证取数正常
+                  </div>
+                  <n-button size="small" type="primary" style="margin-top:10px" @click="addBinding">添加第一条绑定</n-button>
+                </template>
+              </n-empty>
+              <template v-else>
+                <n-space size="small" align="center" style="margin-bottom:8px">
+                  <span class="ec-dim">数据绑定（每类数据一条，从上到下依次执行）</span>
+                  <span class="ec-dim" style="margin-left:auto">测试用参数（只用于「测试」按钮）：</span>
+                  <n-input v-for="(label, key) in cur.params_schema" :key="'rp' + key"
+                           v-model:value="runParams[key]" :placeholder="label" size="small" style="width:110px" />
+                </n-space>
+                <n-space vertical size="small">
                 <div v-for="(b, i) in cur.bindings" :key="i"
                      style="border:1px solid var(--ec-line);border-radius:6px;padding:10px">
                   <n-space size="small" align="center">
                     <n-tag size="tiny" class="ec-mono">{{ i }}</n-tag>
-                    <n-input v-model:value="b.need" placeholder="need（语义标签）" size="small" style="width:140px" />
-                    <n-select v-model:value="b.adapter" :options="adapters" size="small"
-                              style="width:230px" placeholder="选择适配器" />
+                    <span class="ec-dim" style="font-size:12px">数据项名称</span>
+                    <n-input v-model:value="b.need" placeholder="如 quote_snapshot" size="small" style="width:160px" class="ec-mono" />
+                    <n-select v-model:value="b.adapter" :options="adapters" size="small" filterable
+                              style="width:250px" placeholder="选择数据源（附中文说明）" />
                     <n-button size="tiny" :loading="!!testing[i]" @click="testBinding(i)">测试</n-button>
                     <n-button size="tiny" quaternary type="error"
                               @click="cur.bindings.splice(i, 1)"><span v-html="icoTrash"></span></n-button>
                   </n-space>
+                  <div v-if="adapterSummary(b)" class="ec-muted" style="font-size:12px;margin-top:4px">
+                    {{ adapterSummary(b) }}
+                    <span v-if="(adapterCtxKeys(b) || []).length" class="ec-dim">· 产出
+                      <span class="ec-mono">{{ adapterCtxKeys(b).map((k) => '$ctx.' + k).join('、') }}</span>
+                      供下方绑定引用</span>
+                  </div>
                   <div style="margin-top:8px">
                     <template v-if="bindingFields(b)">
                       <div v-for="f in bindingFields(b)" :key="f.k" style="margin-bottom:6px">
                         <div class="ec-muted" style="font-size:12px;margin-bottom:2px">{{ f.label }}
+                          <span v-if="f.required" style="color:#d03050">＊</span>
                           <span v-if="f.hint">（{{ f.hint }}）</span></div>
-                        <n-input v-if="f.type === 'text' || f.type === 'db'" v-model:value="b.params[f.k]" size="small" />
-                        <n-input-number v-else-if="f.type === 'number'" v-model:value="b.params[f.k]" size="small" style="width:140px" />
-                        <n-input v-else-if="f.type === 'textarea'" v-model:value="b.params[f.k]" type="textarea" :rows="2" size="small" class="ec-mono" />
+                        <n-input v-if="f.type === 'text' || f.type === 'db'" v-model:value="b.params[f.k]" size="small" :placeholder="f.ph" class="ec-mono" />
+                        <n-input-number v-else-if="f.type === 'number'" v-model:value="b.params[f.k]" size="small" style="width:140px" :placeholder="f.ph" />
+                        <n-input v-else-if="f.type === 'textarea'" v-model:value="b.params[f.k]" type="textarea" :rows="2" size="small" class="ec-mono" :placeholder="f.ph" />
                         <div v-else-if="f.type === 'kv'" class="ec-mono" style="font-size:12px">
                           <div class="ec-kv-row" v-for="k in kvKeys(b.params[f.k] || {})" :key="k">
                             <n-tag size="tiny" class="ec-mono">{{ k }} =</n-tag>
@@ -829,23 +929,29 @@
                           </div>
                           <n-button size="tiny" dashed @click="addValueColumn(b.params)">加取值列</n-button>
                         </div>
+                        <div v-if="['text', 'db', 'textarea'].includes(f.type) && availableRefs(i).length" style="margin-top:3px">
+                          <n-tag v-for="r in availableRefs(i)" :key="r.text" size="tiny" :bordered="false"
+                                 type="info" class="ec-mono" style="cursor:pointer;margin-right:4px"
+                                 :title="r.label" @click="insertRef(b, f.k, r.text)">{{ r.text }}</n-tag>
+                        </div>
                       </div>
                     </template>
-                    <template v-else>
-                      <div class="ec-muted" style="font-size:12px;margin-bottom:4px">
-                        参数（键值对；值可用 $参数名 / $vocabulary.键 / $ctx.上游产出）</div>
-                      <div class="ec-kv-row" v-for="k in kvKeys(b.params || {})" :key="k">
-                        <n-tag size="tiny" class="ec-mono">{{ k }} =</n-tag>
-                        <n-input :value="String((b.params || {})[k])" size="small" style="width:260px"
-                                 @update:value="(v) => kvSet(b.params || (b.params = {}), k, v)" />
-                        <n-button size="tiny" quaternary @click="kvDel(b.params || (b.params = {}), k)"><span v-html="icoTrash"></span></n-button>
-                      </div>
-                      <div class="ec-kv-row">
-                        <n-input :value="(kvNew['b' + i] || {}).k" @update:value="(v) => { kvNew['b' + i] = Object.assign(kvNew['b' + i] || {}, { k: v }) }" placeholder="参数名" size="small" style="width:110px" class="ec-mono" />
-                        <n-input :value="(kvNew['b' + i] || {}).v" @update:value="(v) => { kvNew['b' + i] = Object.assign(kvNew['b' + i] || {}, { v }) }" placeholder="值（可用 $ 引用）" size="small" style="width:180px" class="ec-mono" />
-                        <n-button size="tiny" dashed @click="kvAddRow(b.params || (b.params = {}), 'b' + i)">添加</n-button>
-                      </div>
-                    </template>
+                    <div v-if="extraParamKeys(b).length" class="ec-muted" style="font-size:12px;margin:4px 0 2px">
+                      其他参数（历史/自定义，删除前请确认无用）</div>
+                    <div class="ec-kv-row" v-for="k in extraParamKeys(b)" :key="'x' + k">
+                      <n-tag size="tiny" class="ec-mono">{{ k }} =</n-tag>
+                      <n-input :value="String((b.params || {})[k])" size="small" style="width:260px" class="ec-mono"
+                               @update:value="(v) => kvSet(b.params || (b.params = {}), k, v)" />
+                      <n-button size="tiny" quaternary @click="kvDel(b.params || (b.params = {}), k)"><span v-html="icoTrash"></span></n-button>
+                    </div>
+                    <div class="ec-kv-row">
+                      <n-input :value="(kvNew['b' + i] || {}).k" @update:value="(v) => { kvNew['b' + i] = Object.assign(kvNew['b' + i] || {}, { k: v }) }" placeholder="参数名" size="small" style="width:110px" class="ec-mono" />
+                      <n-input :value="(kvNew['b' + i] || {}).v" @update:value="(v) => { kvNew['b' + i] = Object.assign(kvNew['b' + i] || {}, { v }) }" placeholder="值（可用 $ 引用）" size="small" style="width:180px" class="ec-mono" />
+                      <n-button size="tiny" dashed @click="kvAddRow(b.params || (b.params = {}), 'b' + i)">加参数</n-button>
+                    </div>
+                  </div>
+                  <div v-for="(w, wi) in ctxWarnings(i, b)" :key="'w' + wi" style="font-size:12px;color:#d03050;margin-top:6px">
+                    {{ w }}
                   </div>
                   <div v-if="testResult[i]" style="margin-top:8px;font-size:12px">
                     <n-tag size="tiny" :type="testResult[i].ok ? 'success' : 'error'">
@@ -860,7 +966,8 @@
                   </div>
                 </div>
                 <n-button size="small" dashed @click="addBinding">加一条数据绑定</n-button>
-              </n-space>
+                </n-space>
+              </template>
               <template #footer>
                 <n-space size="small">
                   <n-button type="primary" size="small" :loading="saving" @click="saveSourcesOnly">保存数据来源</n-button>
@@ -883,6 +990,14 @@
               <div v-if="busyLog.length" class="ec-log" style="margin-top:8px">
                 <div v-for="(l, i) in busyLog" :key="i">{{ l }}</div>
               </div>
+            </n-card>
+            <n-card size="small" class="ec-card" title="judge 对标范文（评审打分时对照的行文风格基准）">
+              <n-space size="small" align="center">
+                <n-input v-model:value="cur.judge_reference" size="small" class="ec-mono"
+                         placeholder="config/reference/xxx.md（建议必配）" style="width:480px" />
+                <n-button size="small" :loading="saving" @click="saveSourcesOnly">保存</n-button>
+                <span class="ec-muted">改动后点保存（随数据来源一并写入）</span>
+              </n-space>
             </n-card>
             <n-card size="small" class="ec-card" title="回放历史（改进闭环：改一版 → 回放 → 对比）">
               <n-empty v-if="!cur.replay_history.length" description="还没有回放记录" size="small" />

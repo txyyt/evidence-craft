@@ -39,7 +39,10 @@ def adapters() -> list[dict]:
     out = []
     for key, cls in sorted(ADAPTERS.items()):
         out.append({"key": key, "kind": getattr(cls, "kind", ""),
-                    "reliability": getattr(cls, "default_reliability", "")})
+                    "reliability": getattr(cls, "default_reliability", ""),
+                    "summary": getattr(cls, "summary", ""),
+                    "param_schema": getattr(cls, "param_schema", None) or [],
+                    "ctx_keys": getattr(cls, "ctx_keys", None) or []})
     return out
 
 
