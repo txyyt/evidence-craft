@@ -9,7 +9,8 @@ LLM 在此阶段只做三件事：拟标题、给每条观点定结论式小标�
 
 from typing import Any
 
-from pipeline.llm import chat_json
+from pipeline.llm import chat_json, tier_for
+from pipeline.reconcile import norm_citation
 from template_factory.schema import SpecV2
 
 SYSTEM = """你是{role}，为报告做写作规划。
@@ -66,15 +67,7 @@ GENERIC_USER_TMPL = """为「{subject}」的报告做写作规划。
 【可引用事实】（编号 名称 = 值 单位；标题与各视角的支撑数字只能出自这里）
 {facts}
 
-任务：
-1. 按标题要求拟报告标题。
-2. 为以下 {n_views} 个固定视角各拟一条结论式小标题（heading，判断句），
-   并从【可引用事实】中为它挑选支撑编号（cited_fact_ids）。
-3. 每条观点给一句 guidance：说明论证路径（先什么后什么、用什么数据对比）。
-
-只输出 JSON：
-{{"title": "...", "views": [{{"slot_id": "...", "heading": "...",
-"cited_fact_ids": [...], "guidance": "..."}}]}}
+{tasks}
 """
 
 
@@ -126,9 +119,8 @@ def _fmt_news(news: list[dict[str, Any]]) -> str:
 
 
 def build_outline(doc: dict[str, Any], spec: SpecV2) -> dict[str, Any]:
+    # views（核心观点）为可选章节：地学等报告类型可不设，大纲只规划标题与选材
     views_sec = spec.section("views")
-    if views_sec is None:
-        raise ValueError("spec 缺少 views 章节")
     meta = doc["meta"]
     facts = doc["facts"]
     coll = doc["collections"]
@@ -136,10 +128,15 @@ def build_outline(doc: dict[str, Any], spec: SpecV2) -> dict[str, Any]:
     system = SYSTEM.format(role=spec.writer_role, description=spec.description,
                            title_style=spec.title_style,
                            rules=spec.rules_text(),
-                           fewshot=spec.fewshot_for(views_sec))
-    schema = ('JSON 字段：title(str)；views(list)：slot_id 必须依次为 '
-              + ",".join(s.id for s in views_sec.view_slots)
-              + '；每项含 heading(str)/cited_fact_ids(list)/guidance(str)。')
+                           fewshot=spec.fewshot_for(views_sec) if views_sec else "")
+    schema = 'JSON 字段：title(str)。'
+    if views_sec:
+        schema += ('views(list)：slot_id 必须依次为 '
+                   + ",".join(s.id for s in views_sec.view_slots)
+                   + '；每项含 heading(str)/cited_fact_ids(list)/guidance(str)。')
+
+    # 综述/图件章节需要大纲阶段做选材规划（股票模板无此类章节，不受影响）
+    plan_secs = [s for s in spec.sections if s.kind in ("text", "figures")]
 
     # 股票场景：periods/consensus 等齐备时走分板块素材提示词（M2 验证过的形态）；
     # 其他部门：通用事实清单路径。两条路径共用 SYSTEM 与输出 Schema。
@@ -162,13 +159,62 @@ def build_outline(doc: dict[str, Any], spec: SpecV2) -> dict[str, Any]:
             n_orgs=cons.get("n_orgs", 0),
             eps0=mean.get("predictThisYearEps"), eps1=mean.get("predictNextYearEps"),
             eps2=mean.get("predictNextTwoYearEps"),
-            n_views=views_sec.n_views,
+            n_views=views_sec.n_views if views_sec else 0,
         )
     else:
-        user = GENERIC_USER_TMPL.format(
-            subject=meta.get("name") or meta.get("stock"),
-            facts=_fmt_facts_generic(facts), n_views=views_sec.n_views)
+        tasks = "任务：\n1. 按标题要求拟报告标题。\n"
+        if views_sec:
+            slots = "\n".join(f"- `{s.id}`：{s.brief}"
+                              for s in views_sec.view_slots)
+            tasks += (
+                "2. 为以下固定视角各拟一条结论式小标题（heading，判断句），"
+                "并从【可引用事实】中为它挑选支撑编号（cited_fact_ids）。\n"
+                "3. 每条观点给一句 guidance：说明论证路径（先什么后什么、用什么数据对比）。\n"
+                "\n只输出 JSON：{\"title\": \"...\", \"views\": [{\"slot_id\": \"...\", "
+                "\"heading\": \"...\", \"cited_fact_ids\": [...], \"guidance\": \"...\"}]}")
+            user = GENERIC_USER_TMPL.format(
+                subject=meta.get("name") or meta.get("stock"),
+                facts=_fmt_facts_generic(facts), tasks=tasks)
+            user = user.replace(
+                "【可引用事实】",
+                "【固定视角】\n" + slots + "\n\n【可引用事实】", 1)
+        else:
+            tasks += '\n只输出 JSON：{"title": "..."}'
+            user = GENERIC_USER_TMPL.format(
+                subject=meta.get("name") or meta.get("stock"),
+                facts=_fmt_facts_generic(facts), tasks=tasks)
 
-    outline = chat_json(system, user, schema)
-    outline["slot_briefs"] = {s.id: s.brief for s in views_sec.view_slots}
+    if plan_secs:
+        listing = "\n".join(
+            f"- {s.id}（{s.title}，{s.kind}）：{(s.style or '')[:80]}"
+            for s in plan_secs)
+        user += ("\n\n【章节选材规划】\n以下章节请逐个规划：\n" + listing
+                 + "\n\n输出 JSON 追加字段 sections(list)：每个章节一项"
+                 " {\"id\": \"...\", \"guidance\": \"该节论证路径一句\","
+                 " \"cited_fact_ids\": [该节支撑事实编号，8~20 个]}。\n")
+        schema += ' sections(list)：上述章节逐项的 id/guidance/cited_fact_ids。'
+
+    # 意图规划（datalayer.planner）：写作意图进入选材视野，各章优先支撑它
+    intent_focus = meta.get("intent")
+    if intent_focus:
+        user += (f"\n\n【本次报告意图】\n{intent_focus}\n"
+                 "标题与各章选材优先支撑该意图。")
+
+    outline = chat_json(system, user, schema, tier=tier_for("write"))
+    outline["views"] = outline.get("views") or []
+    outline["slot_briefs"] = ({s.id: s.brief for s in views_sec.view_slots}
+                              if views_sec else {})
+    # 章节规划兜底：模型漏规划的章节用 style 作 guidance、按前缀均摊事实
+    plans = {p.get("id"): p for p in (outline.get("sections") or [])
+             if isinstance(p, dict) and p.get("id")}
+    for s in plan_secs:
+        if s.id not in plans:
+            plans[s.id] = {"id": s.id, "guidance": s.style or "",
+                           "cited_fact_ids": []}
+        p = plans[s.id]
+        p["cited_fact_ids"] = [t for t in (norm_citation(x) for x in
+                                           (p.get("cited_fact_ids") or [])) if t]
+        if not p["cited_fact_ids"]:
+            p["cited_fact_ids"] = [f["id"] for f in facts[:12]]
+    outline["section_plans"] = plans
     return outline

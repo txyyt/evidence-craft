@@ -43,10 +43,34 @@ class Check(BaseModel):
     title_len: tuple[int, int] | None = None      # 标题字数区间（spec 级）
     require_comma: bool | None = None             # 标题须逗号分隔两判断（spec 级）
     heading_len: tuple[int, int] | None = None    # 观点小标题字数（views）
-    body_len: tuple[int, int] | None = None       # 正文字数（views/table）
+    body_len: tuple[int, int] | None = None       # 正文字数（views/table/text）
     count: tuple[int, int] | None = None          # 条数区间（risk）
     item_suffix: str | None = None                # 每条结尾词（risk，如"风险"）
     min_shaped: int | None = None                 # 至少几条以 item_suffix 结尾（risk）
+
+
+class ChartTemplate(BaseModel):
+    """图件模板（figures 章节）：数据与正文同源（绑定事实/表格），代码渲染。
+
+    source 语法：
+      table:<tid>     → collections["tables"][tid]（columns + rows），x 指定
+                        类目列，y 为数值列（多列 = 多序列）
+      facts:<id前缀>   → 标量事实按 id 前缀过滤，label=事实名 value=数值
+    类型差异：
+      bar/line/pie    两种 source 均可
+      scatter         仅 table: 源——x 为数值列（非类目），y 可多列多序列
+      hist            仅 table: 源——y 单数值列的频数分布，bins 控制 分箱数
+    """
+
+    id: str
+    title: str
+    type: Literal["bar", "line", "pie", "scatter", "hist"] = "bar"
+    source: str
+    x: str | None = None                 # 类目列名（table 源）；scatter 为数值 x 列
+    y: list[str] = Field(default_factory=list)   # 数值列名（table 源，≥1）
+    unit: str = ""                       # 数值单位（轴标签/图注）
+    note: str = ""                       # 图注补充说明（来源、口径）
+    bins: int = 10                       # hist 直方图分箱数（缺省 10）
 
 
 class Section(BaseModel):
@@ -56,14 +80,24 @@ class Section(BaseModel):
     style: str | None = None          # 本节写作要求（喂给对应阶段的 prompt）
     fewshot: str | None = None        # 章节级范文（槽位未配置时兜底）
     check: Check = Field(default_factory=Check)
+    # 显示标题：heading 配置后渲染层原样输出（范文式编号"0　引言"），
+    # 缺省按章节顺序自动编号（docx"一、二、"）；inline 章节不渲染章节标题
+    heading: str | None = None
+    subheading: str | None = None     # 子标题（"1.1　市场供需"），渲染在正文前
+    inline: bool = False              # 无独立章节标题（内嵌在上一章节内的表格位）
     # kind=views
     n_views: int | None = None
     view_slots: list[ViewSlot] = Field(default_factory=list)
     view_style: str | None = None
+    view_numbering: str | None = None  # 槽位编号前缀（"3" → 3.1/3.2…），缺省 1、2、
     # kind=table
     table: str | None = None          # 引用 tables[].id
     # kind=risk
     strategy: Literal["mirror", "enumerate"] | None = None
+    # kind=text
+    freshness_days: int | None = None  # 本节引用事实的时效要求（天数，校验用）
+    # 图件模板：figures 章节为图件集；text 章节可内嵌（正文后跟图）
+    charts: list[ChartTemplate] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _check_kind_fields(self) -> "Section":
@@ -108,6 +142,10 @@ class SpecV2(BaseModel):
 
     def section(self, kind: str) -> Section | None:
         return next((s for s in self.sections if s.kind == kind), None)
+
+    def sections_of(self, kind: str) -> list[Section]:
+        """该 kind 的全部章节（多表格/多图件章节时用）。"""
+        return [s for s in self.sections if s.kind == kind]
 
     def section_by_id(self, sid: str) -> Section | None:
         return next((s for s in self.sections if s.id == sid), None)

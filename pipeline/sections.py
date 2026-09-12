@@ -11,8 +11,8 @@
 
 from typing import Any
 
-from pipeline.llm import chat_json
-from pipeline.reconcile import norm_citation
+from pipeline.llm import chat_json, tier_for
+from pipeline.reconcile import _CITE_RE, norm_citation
 from template_factory.schema import SpecV2
 
 SYSTEM = """你是{role}，撰写报告的一个段落。
@@ -71,6 +71,28 @@ RISK_TMPL = """【已定稿的核心观点】
 {style}
 
 只输出 JSON：{{"body": "条目1；条目2；条目3", "cited_fact_ids": [...]}}"""
+
+
+TEXT_TMPL = """本节主题：{title}
+写作要求：{style}
+大纲指引：{guidance}
+
+【允许引用的事实】（正文数字只能出自这里，逐个引用其编号）
+{facts}
+
+【背景素材】（可引用其中定性信息与专有名词，数字仍以上方事实为准）
+{context}
+
+正文里不得出现 [rag.x.x]、[web.x.x] 等编号标注（编号只写进 cited_fact_ids），
+不得出现"A约为B的X倍"等计算型表述。
+写这一节（可分若干自然段，内容翔实但不注水）。只输出 JSON：
+{{"body": "...", "cited_fact_ids": [...]}}
+"""
+
+
+def _strip_cites(body: str) -> str:
+    """正文净版：剥除 [rag.01.02] 类引用标注（编号只留在 cited_fact_ids）。"""
+    return _CITE_RE.sub("", body or "")
 
 
 def _structure_facts(doc: dict[str, Any]) -> str:
@@ -143,7 +165,9 @@ def gen_risks(doc: dict[str, Any], spec: SpecV2,
     user = RISK_TMPL.format(views=views_text, structure=structure or "（无）",
                             risk_clues=clues, style=risk_sec.style or "")
     out = chat_json(_system(spec, spec.fewshot_for(risk_sec)), user,
-                    schema_hint='只输出 JSON：body/cited_fact_ids。')
+                    schema_hint='只输出 JSON：body/cited_fact_ids。',
+                    tier=tier_for("write"))
+    out["body"] = _strip_cites(out.get("body", ""))
     out["cited_fact_ids"] = _citations_resolvable(doc, out.get("cited_fact_ids") or [])
     return out
 
@@ -260,7 +284,10 @@ def gen_view(doc: dict[str, Any], view: dict[str, Any],
         facts=facts_text, context="\n".join(context_lines) or "（无）",
     )
     out = chat_json(_system(spec, spec.fewshot_for(views_sec, view["slot_id"])),
-                    user, schema_hint='只输出 JSON 对象：heading/body/cited_fact_ids 三个字段。')
+                    user,
+                    schema_hint='只输出 JSON 对象：heading/body/cited_fact_ids 三个字段。',
+                    tier=tier_for("write"))
+    out["body"] = _strip_cites(out.get("body", ""))
     out["slot_id"] = view["slot_id"]
     return out
 
@@ -309,15 +336,44 @@ def _generic_rows_table(doc: dict[str, Any], tpl: Any) -> str:
 _RENDERERS = {"consensus_pe": forecast_table, "generic_rows": _generic_rows_table}
 
 
-def render_table(doc: dict[str, Any], spec: SpecV2) -> str:
-    """按 spec 的 table 章节 → tables[].renderer 分发代码渲染器。"""
-    sec = spec.section("table")
-    if sec is None:
-        return ""
+def gen_text_section(doc: dict[str, Any], sec: Any, plan: dict[str, Any],
+                     spec: SpecV2) -> dict[str, Any]:
+    """text 章节：综述/背景类，整节独立成文（数字同样逐一对账）。"""
+    cited = [t for t in (norm_citation(x) for x in (plan.get("cited_fact_ids") or []))
+             if t]
+    facts_text, _ = _fact_block(doc, cited)
+    context_lines = []
+    for p in (doc["collections"].get("web_pages") or []):
+        if p.get("digest"):
+            context_lines.append(f"{p.get('date') or ''} {p['title']}——{p['digest']}")
+    for n in (doc["collections"].get("news") or [])[:6]:
+        context_lines.append(f"{n['time'][:10]} {n['title']}")
+    user = TEXT_TMPL.format(
+        title=sec.title, style=sec.style or "", guidance=plan.get("guidance", ""),
+        facts=facts_text, context="\n".join(context_lines) or "（无）")
+    out = chat_json(_system(spec, spec.fewshot_for(sec)), user,
+                    schema_hint="只输出 JSON 对象：body/cited_fact_ids 两个字段。",
+                    tier=tier_for("write"))
+    out["body"] = _strip_cites(out.get("body", ""))
+    out["section_id"] = sec.id
+    out["cited_fact_ids"] = _citations_resolvable(doc, out.get("cited_fact_ids") or [])
+    return out
+
+
+def render_table_sec(doc: dict[str, Any], sec: Any, spec: SpecV2) -> str:
+    """按 table 章节 → 其 tables[].renderer 分发代码渲染器（多表格章节各自分发）。"""
     tpl = spec.table(sec.table)
     if tpl is None or tpl.renderer not in _RENDERERS:
         raise ValueError(f"表格渲染器未注册：{sec.table} / {tpl and tpl.renderer}")
     return _RENDERERS[tpl.renderer](doc, tpl)
+
+
+def render_table(doc: dict[str, Any], spec: SpecV2) -> str:
+    """按 spec 的 table 章节 → tables[].renderer 分发代码渲染器（首个 table 章节）。"""
+    sec = spec.section("table")
+    if sec is None:
+        return ""
+    return render_table_sec(doc, sec, spec)
 
 
 def gen_forecast_note(doc: dict[str, Any], spec: SpecV2) -> dict[str, Any]:
@@ -333,4 +389,33 @@ def gen_forecast_note(doc: dict[str, Any], spec: SpecV2) -> dict[str, Any]:
     user = FORECAST_TMPL.format(table=render_table(doc, spec), latest_summary=summary,
                                 fact_ids=", ".join(ids[:8]), style=table_sec.style or "")
     return chat_json(_system(spec, spec.fewshot_for(table_sec)),
-                     user, schema_hint="只输出 JSON：body/cited_fact_ids。")
+                     user, schema_hint="只输出 JSON：body/cited_fact_ids。",
+                     tier=tier_for("write"))
+
+
+TABLE_NOTE_TMPL = """以下是系统生成的表格（正文所有表格数字以它为准）：
+
+{table}
+
+【允许引用的事实编号】{fact_ids}
+
+按以下要求写说明文字：
+{style}
+
+只输出 JSON：{{"body": "...", "cited_fact_ids": [...]}}
+"""
+
+
+def gen_table_note(doc: dict[str, Any], sec: Any, spec: SpecV2) -> dict[str, Any]:
+    """table 章节说明文字（通用）：表格数字由代码渲染，LLM 只写解读文字。"""
+    ids = [f["id"] for f in doc["facts"]][:12]
+    user = TABLE_NOTE_TMPL.format(table=render_table_sec(doc, sec, spec),
+                                  fact_ids=", ".join(ids),
+                                  style=sec.style or "")
+    out = chat_json(_system(spec, spec.fewshot_for(sec)), user,
+                    schema_hint="只输出 JSON：body/cited_fact_ids。",
+                    tier=tier_for("write"))
+    out["body"] = _strip_cites(out.get("body", ""))
+    out["section_id"] = sec.id
+    out["cited_fact_ids"] = _citations_resolvable(doc, out.get("cited_fact_ids") or [])
+    return out

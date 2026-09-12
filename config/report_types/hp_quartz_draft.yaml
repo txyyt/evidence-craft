@@ -1,0 +1,199 @@
+report_type: hp_quartz_review
+version: 2
+description: 矿产资源勘查开发综述类学术报告：现状综述、问题分析与发展建议
+writer_role: 资深报告撰写人
+title_style: 主标题为'对象+现状+思考/展望'式，如《我国高纯石英资源勘查开发现状及思考》；二级标题用数字编号短主题式（1.1 市场供需、2.2 找矿勘查与加工技术现状）
+title_check:
+  title_len: null
+  require_comma: null
+  heading_len: null
+  body_len: null
+  count: null
+  item_suffix: null
+  min_shaped: null
+sections:
+- id: introduction
+  title: 引言
+  kind: text
+  style: null
+  fewshot: null
+  check:
+    title_len: null
+    require_comma: null
+    heading_len: null
+    body_len: null
+    count: null
+    item_suffix: null
+    min_shaped: null
+  n_views: null
+  view_slots: []
+  view_style: null
+  table: null
+  strategy: null
+  freshness_days: null
+  charts: []
+- id: resource_overview
+  title: 资源概况与储量现状
+  kind: text
+  style: null
+  fewshot: null
+  check:
+    title_len: null
+    require_comma: null
+    heading_len: null
+    body_len: null
+    count: null
+    item_suffix: null
+    min_shaped: null
+  n_views: null
+  view_slots: []
+  view_style: null
+  table: null
+  strategy: null
+  freshness_days: null
+  charts: []
+- id: market_and_supply
+  title: 市场供需与资源保障
+  kind: table
+  style: null
+  fewshot: null
+  check:
+    title_len: null
+    require_comma: null
+    heading_len: null
+    body_len: null
+    count: null
+    item_suffix: null
+    min_shaped: null
+  n_views: null
+  view_slots: []
+  view_style: null
+  table: market_and_supply_table
+  strategy: null
+  freshness_days: null
+  charts: []
+- id: current_research_status
+  title: 成矿机理与勘查加工技术现状
+  kind: text
+  style: null
+  fewshot: null
+  check:
+    title_len: null
+    require_comma: null
+    heading_len: null
+    body_len: null
+    count: null
+    item_suffix: null
+    min_shaped: null
+  n_views: null
+  view_slots: []
+  view_style: null
+  table: null
+  strategy: null
+  freshness_days: null
+  charts: []
+- id: key_issues_views
+  title: 存在的主要问题与对策建议
+  kind: text
+  style: null
+  fewshot: null
+  check:
+    title_len: null
+    require_comma: null
+    heading_len: null
+    body_len: null
+    count: null
+    item_suffix: null
+    min_shaped: null
+  n_views: null
+  view_slots: []
+  view_style: null
+  table: null
+  strategy: null
+  freshness_days: null
+  charts: []
+- id: risk_and_uncertainty
+  title: 风险与不确定性说明
+  kind: risk
+  style: null
+  fewshot: null
+  check:
+    title_len: null
+    require_comma: null
+    heading_len: null
+    body_len: null
+    count: null
+    item_suffix: null
+    min_shaped: null
+  n_views: null
+  view_slots: []
+  view_style: null
+  table: null
+  strategy: enumerate
+  freshness_days: null
+  charts: []
+- id: conclusion
+  title: 结论与展望
+  kind: text
+  style: null
+  fewshot: null
+  check:
+    title_len: null
+    require_comma: null
+    heading_len: null
+    body_len: null
+    count: null
+    item_suffix: null
+    min_shaped: null
+  n_views: null
+  view_slots: []
+  view_style: null
+  table: null
+  strategy: null
+  freshness_days: null
+  charts: []
+tables:
+- id: market_and_supply_table
+  renderer: generic_rows
+  columns: []
+writing_rules:
+- 标题层级使用[H2]/[H3]/[H4]编号体系（如4、1.1、2.2.1）
+- 图件须编号并附中文图题，部分图题附英文对照（如Fig. 2）
+- 纯度以百分比加等级双重表示（如99.99%（4N））
+- 年份区间用一字线连接（如2018—2023年）
+- 作者姓名间用全角空格（如张　亮）
+- 机构署名带编号上标并列全称及地址邮编
+- 摘要采用'通过……分析得出：①②③'的编号式结论表述
+- 附中图分类号、文献标识码、文章编号、DOI、引用格式、基金项目、作者简介、收稿日期等期刊元数据
+- 摘要末以'以期……'式目的句收尾
+- 专有名词首次出现附英文缩写（如高纯石英（HPQ））
+forbidden_words:
+- 我
+- 我们
+- 笔者认为
+- ！
+- 极
+- 最最优
+- 毫无疑问
+- 惊人
+- 绝对
+controlled_vocab:
+  资源类型:
+  - 花岗伟晶岩型
+  - 脉石英型
+  - 伟晶岩型
+  纯度等级:
+  - 4N
+  - 99.99%
+  勘查术语:
+  - 找矿勘查
+  - 矿体圈定
+  - 资源量估算
+  - 工业指标
+  - 选矿提纯
+  - 对外依存度
+  - 地质勘查规范
+check_rules: []
+judge_reference: null
+disclaimer: null
+industry_keywords: []

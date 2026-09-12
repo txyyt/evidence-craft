@@ -20,11 +20,17 @@ class RunIn(BaseModel):
     project: str | None = None
     period: str | None = None
     spec: str | None = None
+    intent: str | None = None      # 写作意图一段话（意图规划模式）
+    folder: str | None = None      # 本地资料文件夹（现场建语料库）
+    model_tier: str | None = None  # F3 档位覆盖（settings.model_tiers 档名）
 
 
 class PreviewIn(BaseModel):
     type_id: str
     params: dict[str, str] = {}
+    intent: str | None = None
+    folder: str | None = None
+    model_tier: str | None = None
 
 
 def _artifacts_root() -> Path:
@@ -48,19 +54,67 @@ async def start(body: RunIn) -> dict:
     if body.spec:
         argv += ["--spec", body.spec]
     for flag, v in (("--stock", body.stock), ("--project", body.project),
-                    ("--period", body.period)):
+                    ("--period", body.period), ("--intent", body.intent),
+                    ("--folder", body.folder)):
         if v:
             argv += [flag, v]
+    if body.model_tier:
+        argv += ["--model-tier", body.model_tier]
     task = bus.start_run(argv, body.type_id, asyncio.get_running_loop())
     return {"id": task.id, "events_url": f"/api/runs/{task.id}/events"}
 
 
 @router.post("/preview")
 def preview(body: PreviewIn) -> dict:
-    """数据预检：只跑数据层（秒级），提前暴露缺参数/数据为空。"""
+    """数据预检：只跑数据层（秒级），提前暴露缺参数/数据为空。
+    意图模式（intent/folder 给出时）先用规划器生成采集计划，按计划取数，
+    并把计划摘要一并返回供页面展示。model_tier 只作用于本次预检调用。"""
     from datalayer import registry
+    from pipeline import llm
+    if body.model_tier:
+        llm.set_tier_override(body.model_tier)
     try:
-        doc, crosscheck = registry.run_data_layer(body.type_id, body.params)
+        return _preview_impl(body, registry)
+    finally:
+        llm.set_tier_override(None)
+
+
+def _preview_impl(body: PreviewIn, registry) -> dict:
+    override = None
+    plan_summary = None
+    if body.intent or body.folder:
+        try:
+            from datalayer.planner import make_plan, plan_to_bindings
+            from template_factory.schema import load_spec
+            spec = load_spec(registry.spec_path(body.type_id))
+            plan = make_plan(spec, registry.load_sources(body.type_id),
+                             body.intent or "", body.folder or None)
+            override = plan_to_bindings(plan, registry.load_sources(body.type_id))
+            plan_summary = {
+                "mode": plan["mode"],
+                "focus": plan.get("focus", ""),
+                "n_rag": len(plan.get("rag") or []),
+                "n_web": len(plan.get("web") or []),
+                "n_db": len(plan.get("db") or []),
+                "n_tables": len(plan.get("tables_kept") or []),
+                "corpus": ({"n_fragments": plan["corpus"]["n_fragments"],
+                            "rebuilt": plan["corpus"]["rebuilt"],
+                            "n_files": plan["corpus"]["n_files"]}
+                           if plan.get("corpus") else None),
+            }
+            if plan.get("warnings"):
+                plan_summary["warnings"] = plan["warnings"][:5]
+            if plan.get("error"):
+                plan_summary["note"] = f"规划降级（{plan['error'][:80]}）"
+        except FileNotFoundError as e:
+            return {"ok": False, "error": f"数据文件不存在：{e}"}
+        except Exception as e:  # noqa: BLE001
+            return {"ok": False, "error": f"规划失败：{type(e).__name__}: {e}"}
+    try:
+        doc, crosscheck = (registry.run_data_layer(body.type_id, body.params,
+                                                   bindings_override=override)
+                           if override is not None else
+                           registry.run_data_layer(body.type_id, body.params))
     except FileNotFoundError as e:
         return {"ok": False, "error": f"数据文件不存在：{e}"}
     except Exception as e:  # noqa: BLE001 —— 预检就是把问题提前报出来
@@ -69,6 +123,7 @@ def preview(body: PreviewIn) -> dict:
     return {"ok": len(doc["facts"]) > 0,
             "n_facts": len(doc["facts"]),
             "warnings": warnings,
+            "plan": plan_summary,
             "crosscheck": (crosscheck or {}).get("status") if crosscheck else None,
             "sample": doc["facts"][:5],
             "error": None if doc["facts"] else "所有绑定均未取到数据（检查参数与绑定）"}

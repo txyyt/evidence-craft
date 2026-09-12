@@ -1,0 +1,37 @@
+{
+  "built_at": "2026-09-11T02:36:26",
+  "sheets": [
+    {
+      "sheet": "分省资源储量",
+      "query": "脉石英 资源储量 分省 四川 湖南 新疆 万元",
+      "n_fragments": 8,
+      "n_rows_kept": 5,
+      "n_rows_dropped": 1,
+      "dropped": [
+        [
+          "江西",
+          "脉石英",
+          "1681.5",
+          "全球高纯石英资源开发利用现状及供需分析_张海啟",
+          "2"
+        ]
+      ]
+    },
+    {
+      "sheet": "应用消费结构",
+      "query": "高纯石英 应用 用量 占比 光伏 半导体 电光源 光纤",
+      "n_fragments": 8,
+      "n_rows_kept": 5,
+      "n_rows_dropped": 0,
+      "dropped": []
+    },
+    {
+      "sheet": "主要企业",
+      "query": "高纯石英砂 主要企业 产能 石英股份 尤尼明 TQC 挪威",
+      "n_fragments": 8,
+      "n_rows_kept": 9,
+      "n_rows_dropped": 0,
+      "dropped": []
+    }
+  ]
+}

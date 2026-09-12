@@ -88,8 +88,8 @@ def main() -> None:
     assert _number_in_text(1.0, "边界品位 1.0 g/t")
     assert not _number_in_text(9.99, "边界品位 1.0 g/t")
     from unittest import mock as _mock
-    fake = {"facts": [{"name": "伪造品位", "value": 9.99, "unit": "g/t"},
-                      {"name": "边界品位", "value": 1.0, "unit": "g/t"}]}
+    fake = {"facts": [{"frag": 0, "name": "伪造品位", "value": 9.99, "unit": "g/t"},
+                      {"frag": 0, "name": "边界品位", "value": 1.0, "unit": "g/t"}]}
     with _mock.patch("pipeline.llm.chat_json", return_value=fake):
         from datalayer.adapters import rag as rag_mod
         frags = [{"doc": "t", "page": 1, "text": "边界品位 1.0 g/t"}]
@@ -103,6 +103,73 @@ def main() -> None:
     assert 9.99 not in vals and 1.0 in vals, f"抽取即对账失效：{vals}"
     assert any("丢弃 1 个" in w for w in r.warnings)
     print("⑤ 抽取即对账：注入的假数字 9.99 被丢弃（原文无出处），真数字保留 ✓")
+
+    # ⑥ F1 SQL 安全硬约束：sanitize_sql 代码强制（不靠提示词）
+    from datalayer.adapters.database import sanitize_sql
+    for bad in ("DROP TABLE drill_summary",
+                "SELECT 孔号 FROM drill_summary; DROP TABLE drill_summary",
+                "DELETE FROM drill_summary",
+                "PRAGMA database_list",
+                "SELECT 'a;b' -- 注释\n; ATTACH DATABASE 'x' AS y",
+                "INSERT INTO drill_summary VALUES (1)"):
+        try:
+            sanitize_sql(bad)
+            raise AssertionError(f"注入样例未被拒绝：{bad}")
+        except ValueError:
+            pass
+    print("⑥a sanitize_sql：DROP/多语句/DELETE/PRAGMA/注释夹带/INSERT 全部拒绝 ✓")
+    q = sanitize_sql("SELECT 孔号, 进尺 FROM drill_summary WHERE 项目 = :project")
+    assert q.endswith("LIMIT 200") and "LIMIT" in q
+    q2 = sanitize_sql("SELECT 孔号 FROM drill_summary LIMIT 5")
+    assert q2.count("LIMIT") == 1, "已有 LIMIT 不应重复追加"
+    q3 = sanitize_sql("SELECT 孔号 FROM drill_summary -- 取孔号\nWHERE 进尺 > 100")
+    assert "--" not in q3 and "LIMIT 200" in q3, "注释应被剥除后再补 LIMIT"
+    print("⑥b sanitize_sql：无 LIMIT 自动补 LIMIT 200；已有 LIMIT 不重复；注释剥除 ✓")
+
+    # ⑦ F1 规划器 db 计划清洗：合法查询入库，注入查询拒绝并记 warning
+    from datalayer import planner
+    schemas = planner._db_schemas()
+    assert "assay_db" in schemas and "drill_summary" in schemas["assay_db"], schemas
+    out = {"subject": "s", "focus": "f",
+           "rag": [], "web": [],
+           "db": [{"need": "db_drill", "db_ref": "assay_db",
+                   "query": "SELECT 孔号, 进尺, 见矿段数 FROM drill_summary "
+                            "WHERE 项目 = :project",
+                   "query_params": {"project": "$project"},
+                   "id_column": "孔号", "name_template": "{孔号} 进尺",
+                   "value_columns": [{"column": "进尺", "key": "footage",
+                                      "unit": "m"}]},
+                  {"need": "db_evil", "db_ref": "assay_db",
+                   "query": "SELECT 孔号 FROM drill_summary; DROP TABLE "
+                            "drill_summary",
+                   "id_column": "孔号"},
+                  {"need": "db_unknown", "db_ref": "nope_db",
+                   "query": "SELECT 1", "id_column": "x"}],
+           "tables_kept": []}
+    cleaned, warns = planner._clamp_plan(out, [], None, schemas)
+    assert len(cleaned["db"]) == 1 and cleaned["db"][0]["need"] == "db_drill"
+    assert cleaned["db"][0]["query"].endswith("LIMIT 200")
+    assert cleaned["db"][0]["query_params"] == {"project": "$project"}
+    assert len(warns) == 2, f"应有 2 条拒绝告警：{warns}"
+    assert any("禁止多语句" in w for w in warns) and any("未知数据库" in w for w in warns)
+    # plan → 动态绑定（sqlite_query，registry 可直接执行）
+    plan = {"db": cleaned["db"], "rag": [], "web": [], "tables_kept": []}
+    bindings = planner.plan_to_bindings(plan, {"bindings": []})
+    assert len(bindings) == 1 and bindings[0]["adapter"] == "sqlite_query"
+    assert bindings[0]["params"]["id_prefix"] == "db_drill"
+    print("⑦ 规划器 db 清洗：合法查询入库（自动 LIMIT/参数字符串化），"
+          "注入与未知库拒绝并记 warning；plan_to_bindings 产出 sqlite_query 绑定 ✓")
+
+    # ⑧ adapter 层双保险：DROP 直连执行也被拒绝
+    try:
+        SQLiteAdapter().fetch({"db_ref": "assay_db",
+                               "query": "DROP TABLE drill_summary",
+                               "id_prefix": "x", "id_column": "孔号",
+                               "name_template": "{孔号}",
+                               "value_columns": []})
+        raise AssertionError("adapter 未拒绝 DROP")
+    except ValueError:
+        print("⑧ adapter 双保险：DROP 直达 SQLiteAdapter 也被 sanitize 拒绝 ✓")
 
     print("\nM7 数据源绑定验收通过")
 

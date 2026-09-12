@@ -23,9 +23,10 @@ from datalayer.settings import settings
 
 
 def _scan_adapters() -> dict[str, type[SourceAdapter]]:
-    from datalayer.adapters import database, eastmoney, local_file, rag, web_public
+    from datalayer.adapters import (database, eastmoney, local_file, rag,
+                                    web_public, web_search)
     reg: dict[str, type[SourceAdapter]] = {}
-    for mod in (eastmoney, local_file, database, rag, web_public):
+    for mod in (eastmoney, local_file, database, rag, web_public, web_search):
         for name in dir(mod):
             obj = getattr(mod, name)
             if (isinstance(obj, type) and issubclass(obj, SourceAdapter)
@@ -168,60 +169,126 @@ def _resolve_binding_params(binding: dict, run_params: dict, vocabulary: dict,
     return (resolved if not missing else None), missing
 
 
+def _params_needs_ctx(binding: dict) -> bool:
+    """绑定参数是否引用 $ctx（依赖上游绑定产出）——引用者不参与并发。"""
+    def _scan(v: Any) -> bool:
+        if isinstance(v, str):
+            return v.startswith("$ctx.")
+        if isinstance(v, dict):
+            return any(_scan(x) for x in v.values())
+        if isinstance(v, list):
+            return any(_scan(x) for x in v)
+        return False
+    return _scan(binding.get("params") or {})
+
+
+def _run_binding(binding: dict, index: int, run_params: dict, vocabulary: dict,
+                 ctx: dict) -> dict[str, Any]:
+    """执行单个绑定（只读 run_params/vocabulary/ctx），返回分类结果。"""
+    cls = ADAPTERS.get(binding.get("adapter"))
+    if cls is None:
+        return {"ok": False, "index": index,
+                "log": {"index": index, "adapter": binding.get("adapter"),
+                        "ok": False, "error": "未注册的 adapter"},
+                "warnings": [f"binding[{index}] 未注册的 adapter: "
+                             f"{binding.get('adapter')}"]}
+    resolved, missing = _resolve_binding_params(binding, run_params,
+                                                vocabulary, ctx)
+    if resolved is None:
+        return {"ok": False, "index": index,
+                "log": {"index": index, "adapter": binding.get("adapter"),
+                        "ok": False, "missing": missing},
+                "warnings": [f"binding[{index}] {binding.get('adapter')} 缺参数"
+                             f"（检查运行参数/词表/上游 ctx）：{missing}"]}
+    try:
+        result: AdapterResult = cls().fetch(resolved)
+    except SourceError as e:
+        return {"ok": False, "index": index,
+                "log": {"index": index, "adapter": binding.get("adapter"),
+                        "ok": False, "error": str(e)},
+                "warnings": [f"binding[{index}] {binding.get('adapter')} 失败: {e}"]}
+    except Exception as e:  # noqa: BLE001 —— 单源失败不阻塞
+        return {"ok": False, "index": index,
+                "log": {"index": index, "adapter": binding.get("adapter"),
+                        "ok": False, "error": f"{type(e).__name__}: {e}"},
+                "warnings": [f"binding[{index}] {binding.get('adapter')} 异常: "
+                             f"{type(e).__name__}: {e}"]}
+    for f in result.facts:
+        f.setdefault("reliability", cls.default_reliability)
+    return {"ok": True, "index": index, "result": result, "resolved": resolved,
+            "log": {"index": index, "adapter": binding.get("adapter"), "ok": True,
+                    "resolved": resolved, "n_facts": len(result.facts)},
+            "warnings": list(result.warnings)}
+
+
 def _resolve_all(binding_list: list[dict], run_params: dict, vocabulary: dict,
                  ctx: dict, upto: int | None = None) -> dict[str, Any]:
     """顺序解析/执行绑定（$ctx 依赖链；单绑定失败记 warning 继续）；
-    upto 限制只执行到第几个绑定（单绑定测试用）。"""
+    upto 限制只执行到第几个绑定（单绑定测试用）。
+
+    加速：连续多个"无 $ctx 依赖"的绑定（rag/web/xlsx 等互相独立的源）
+    并发执行，遇 ctx 依赖的绑定回落串行——geology 的样品链等依赖场景不受影响。"""
+    from concurrent.futures import ThreadPoolExecutor
+
     facts: list[dict[str, Any]] = []
     collections: dict[str, Any] = {}
     meta: dict[str, Any] = {}
     warnings: list[str] = []
     resolved_log: list[dict[str, Any]] = []
+
+    binding_list = list(binding_list)[:upto + 1] if upto is not None \
+        else list(binding_list)
+
+    def _merge(batch: list[dict[str, Any]]) -> None:
+        for r in sorted(batch, key=lambda x: x["index"]):
+            entry = r["log"]
+            resolved_log.append(entry)
+            warnings.extend(r["warnings"])
+            if not r["ok"]:
+                continue
+            result = r["result"]
+            facts.extend(result.facts)
+            for k, v in result.collections.items():
+                prev = collections.get(k)
+                if isinstance(v, dict) and isinstance(prev, dict):
+                    prev.update(v)          # 多个 xlsx 绑定各自产 table：按键合并
+                elif isinstance(v, list) and isinstance(prev, list):
+                    prev.extend(v)          # 多个 web_search 绑定各自产 web_pages
+                else:
+                    collections[k] = v
+            ctx.update(result.ctx)
+            meta.update(result.meta)
+
+    batch: list[dict[str, Any]] = []
     for i, binding in enumerate(binding_list):
-        if upto is not None and i > upto:
-            break
-        key = binding.get("adapter")
-        cls = ADAPTERS.get(key)
-        if cls is None:
-            warnings.append(f"binding[{i}] 未注册的 adapter: {key}")
-            continue
-        resolved, missing = _resolve_binding_params(binding, run_params,
-                                                    vocabulary, ctx)
-        if resolved is None:
-            warnings.append(f"binding[{i}] {key} 缺参数（检查运行参数/词表/上游 ctx）："
-                            f"{missing}")
-            resolved_log.append({"index": i, "adapter": key,
-                                 "ok": False, "missing": missing})
-            continue
-        try:
-            result: AdapterResult = cls().fetch(resolved)
-        except SourceError as e:
-            warnings.append(f"binding[{i}] {key} 失败: {e}")
-            resolved_log.append({"index": i, "adapter": key, "ok": False,
-                                 "error": str(e)})
-            continue
-        except Exception as e:  # noqa: BLE001 —— 单源失败不阻塞
-            warnings.append(f"binding[{i}] {key} 异常: {type(e).__name__}: {e}")
-            resolved_log.append({"index": i, "adapter": key,
-                                 "ok": False, "error": f"{type(e).__name__}: {e}"})
-            continue
-        for f in result.facts:
-            f.setdefault("reliability", cls.default_reliability)
-        facts.extend(result.facts)
-        collections.update(result.collections)
-        ctx.update(result.ctx)
-        meta.update(result.meta)
-        warnings.extend(result.warnings)
-        resolved_log.append({"index": i, "adapter": key, "ok": True,
-                             "resolved": resolved, "n_facts": len(result.facts)})
+        if _params_needs_ctx(binding):
+            _merge(batch)
+            batch = []
+            _merge([_run_binding(binding, i, run_params, vocabulary, ctx)])
+        else:
+            batch.append(_run_binding(binding, i, run_params, vocabulary, ctx))
+            if len(batch) >= 6:            # 并发上限：6 个绑定一批
+                _merge(batch)
+                batch = []
+    _merge(batch)
     return {"facts": facts, "collections": collections, "meta": meta,
             "warnings": warnings, "resolved_log": resolved_log}
 
 
-def run_data_layer(type_id: str, run_params: dict[str, Any]) -> tuple[dict, Any]:
-    """按报告类型绑定取数 → (facts_doc, crosscheck|None)。单源失败不阻塞。"""
+def run_data_layer(type_id: str, run_params: dict[str, Any],
+                   extra_bindings: list[dict] | None = None,
+                   bindings_override: list[dict] | None = None) -> tuple[dict, Any]:
+    """按报告类型绑定取数 → (facts_doc, crosscheck|None)。单源失败不阻塞。
+
+    extra_bindings：追加在模板静态绑定之后（同 schema：need/adapter/params）。
+    bindings_override：整体替换静态绑定——意图规划器（datalayer/planner）
+    用采集计划接管本次 rag/web 查询并筛选沿用表格时使用。"""
     src = load_sources(type_id)
-    summary = _resolve_all(src.get("bindings") or [], run_params,
+    if bindings_override is not None:
+        bindings = list(bindings_override)
+    else:
+        bindings = list(src.get("bindings") or []) + list(extra_bindings or [])
+    summary = _resolve_all(bindings, run_params,
                            src.get("vocabulary") or {}, dict(run_params))
     meta = {"type_id": type_id, **summary["meta"]}
     meta.update({

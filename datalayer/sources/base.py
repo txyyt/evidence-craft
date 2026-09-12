@@ -46,6 +46,31 @@ def get_json(
     raise SourceError(f"GET {url} 失败: {last_err}")
 
 
+def get_text(
+    url: str,
+    params: Optional[dict] = None,
+    referer: str = REFERER,
+    timeout: Optional[int] = None,
+) -> str:
+    """GET → 按内容推断编码的文本（HTML/搜索结果页）。"""
+    retries = settings.http["retries"]
+    last_err: Optional[Exception] = None
+    for attempt in range(retries + 1):
+        try:
+            resp = _session.get(
+                url, params=params, timeout=timeout or settings.http["timeout"],
+                headers={"Referer": referer}
+            )
+            resp.raise_for_status()
+            resp.encoding = resp.apparent_encoding or "utf-8"
+            return resp.text
+        except Exception as e:  # noqa: BLE001 - 统一重试后抛 SourceError
+            last_err = e
+            if attempt < retries:
+                time.sleep(1.5 * (attempt + 1))
+    raise SourceError(f"GET {url} 失败: {last_err}")
+
+
 def post_json(url: str, body: dict, timeout: Optional[int] = None) -> Any:
     """POST JSON → JSON（M7：外部检索服务等自有 API，不带东财 Referer）。"""
     try:

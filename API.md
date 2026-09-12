@@ -54,9 +54,21 @@
 | `registry.ADAPTERS` | 注册表：adapter key → 类；新 adapter 继承 `SourceAdapter`（key/kind/fetch）放入 `datalayer/adapters/` 即自动注册 |
 | `adapters.base.AdapterResult` | `{facts, collections, meta, ctx, warnings}`；ctx 供跨 binding 传递（如 board_code） |
 | `adapters.base.rows_to_facts(...)` | 行记录 → 事实六元组（local_file/database 共用声明式映射） |
-| 内置 adapter | web：`em_quote / em_financial / em_peer / em_announcement / em_industry_news / em_consensus / em_mainop / em_statements / em_news`、`usgs_earthquakes`（公开 API 验证）；local_file：`xlsx_table`（声明式映射 + inbox 目录 + 内容 md5 指纹）；database：`sqlite_query`（查询模板 + 命名参数）；rag：`rag_client`（外部检索客户端 + 片段抽数，`reliability=retrieved`，**抽取即对账**：数字必须在片段原文中找到，否则丢弃） |
+| `database.sanitize_sql(query, limit=200) -> str` | **SQL 安全硬约束（代码强制，不靠提示词）**：剥注释后仅允许单条 SELECT；引号外出现分号（多语句）拒绝；ATTACH/PRAGMA 等非查询关键字拒绝；无 LIMIT 自动追加 `LIMIT 200`。SQLiteAdapter 执行前统一过此函数（静态与动态查询双保险），违规抛 ValueError → registry 记 warning |
+| 内置 adapter | web：`em_quote / em_financial / em_peer / em_announcement / em_industry_news / em_consensus / em_mainop / em_statements / em_news`、`usgs_earthquakes`（公开 API 验证）；local_file：`xlsx_table`（声明式映射 + inbox 目录 + 内容 md5 指纹）；database：`sqlite_query`（查询模板 + 命名参数，经 sanitize_sql 安全约束）；rag：`rag_client`（外部检索客户端 + 片段抽数，`reliability=retrieved`，**抽取即对账**：数字必须在片段原文中找到，否则丢弃；mock 模式内置 2-gram 关键词检索，片段可由 `python -m datalayer.corpus` 建库）；web：`web_search`（keyless 联网搜索：百度→搜狗→Bing RSS→DDG 级联 + playwright 连本机 Edge 兜底 + settings.web_search.endpoint 付费 API 预留；事实卡带 URL/发布日期，抽取回验原文，结果缓存 data/cache/web_search/） |
 | 部门 profile 字段 | `bindings[{need, adapter, params}]`、`vocabulary`、`features`（如 kline_chart）、`crosschecks`、`judge_reference`（部门级缺省，模板可覆盖）、`params_schema` |
-| 流水线 CLI | `python run_pipeline.py --full --department <dept> [--stock X] [--project P] [--period T] [--spec xxx.yaml]`；部门缺省 stock_demo；judge 范文解析链：spec → profile |
+| 流水线 CLI | `python run_pipeline.py --full --type <dept> [--stock X] [--project P] [--period T] [--spec xxx.yaml] [--intent 一段话意图] [--folder 资料目录] [--reuse-data 目录名] [--model-tier fast\|quality]`；`--model-tier` 固定本次全部 LLM 调用走该档（settings.model_tiers 档名，写入 meta.json 的 model_tier）；judge 范文解析链：spec → profile |
+| `registry.run_data_layer(type_id, run_params, extra_bindings=None, bindings_override=None)` | extra_bindings 追加动态绑定；bindings_override 整体替换静态绑定（意图规划接管查询时用），其余行为不变；绑定执行无 `$ctx` 依赖时分批并行（≤6/批） |
+| `planner.make_plan(spec, sources, intent, folder=None) -> plan` | **意图驱动数据规划器（Phase B / F1）**：一段话意图 + 结构模板 + 静态绑定 → 采集计划 `{mode: llm\|fallback, subject, focus, rag[], web[], db[], tables_kept[], corpus?, warnings?}`；db 规划：读 settings.databases 各 SQLite 库的表/列 schema（PRAGMA，只读结构不取数）喂给 LLM 产出 `db[{need, db_ref, query, query_params, id_column, name_template, value_columns, as_of_column?, table_columns?, table_id?}]`，逐条过 sanitize_sql（违规拒绝并记 warnings）；静态 db 绑定不可剔除；LLM 规划失败自动规则兜底（沿用模板查询，plan 标注 fallback 与 error，不臆造 db 查询）；folder 给定时现场建语料库（内容指纹缓存 data/corpus/_intent/<fp>/，未变化复用），rag 查询切换到新库；plan.json 随运行落 artifacts 可审计（含 db 查询全文） |
+| `planner.plan_to_bindings(plan, sources) -> bindings` | 计划 → sources.yaml 同 schema 绑定列表（rag/web 按计划生成、db 按 db[] 转 sqlite_query 动态绑定（query_params 值一律字符串化，可为 `$参数` 引用运行参数）、表格按 tables_kept 沿用），配合 run_data_layer(bindings_override=...) 执行 |
+| 意图模式 CLI | `python run_pipeline.py --full --type hp_quartz_review --project 主题 --intent "一段话意图" [--folder "本地资料目录"]`；意图焦点写入 facts meta.intent 并进入大纲选材；不传 --intent/--folder 时行为与原版完全一致 |
+| `POST /api/types/{id}/extract` | 提取结果落 `report.draft.yaml` 草稿（不直接定稿）；已有定稿 report.yaml 时 409 |
+| `GET /api/types/{id}/structure-draft` | `{exists, spec}`：提取草稿（范文结构待确认） |
+| `POST /api/types/{id}/structure-confirm` | body `{spec?}`（缺省用草稿原样）→ SpecV2 校验 → 定稿 report.yaml；已定稿 409，无草稿 404 |
+| `DELETE /api/types/{id}/structure-draft` | 放弃草稿 |
+| `GET /api/types/{id}` | 新增 `has_draft` / `draft_spec` 字段 |
+| `POST /api/runs/start` | body 新增 `intent`（写作意图）/`folder`（本地资料目录）/`model_tier`（F3 档位覆盖），透传 run_pipeline `--intent/--folder/--model-tier` |
+| `POST /api/runs/preview` | body 新增 `intent`/`folder`/`model_tier`（仅本次预检生效）：意图模式先规划采集计划再按计划预检，响应新增 `plan{mode,focus,n_rag,n_web,n_db,n_tables,corpus,warnings?,note?}` |
 
 ## server（M8-R1 重构——单用户"报告类型"模型）
 
@@ -71,7 +83,8 @@ name/status/params_schema/vocabulary/features/crosschecks/judge_reference/bindin
 NaiveUI + ECharts，vendor/ 本地化，免构建）；静态产物挂 `/artifacts/<dir>/`。
 SSE 事件协议：`{type: progress|end, stage, message, data|None, ts}`，end 携带
 `{status: done|error|cancelled, run_dir, error, error_detail}`；data 恒含
-`llm_calls / llm_seconds / stage_seconds`；600s 心跳。
+`llm_calls / llm_seconds / stage_seconds / llm_tiers`（F3 分档调用统计：
+`{档名: {calls, seconds, model}}`，档名 default/fast/quality）；600s 心跳。
 
 | 路由 | 契约 |
 |---|---|
@@ -99,6 +112,15 @@ SSE 事件协议：`{type: progress|end, stage, message, data|None, ts}`，end �
 安全约定：凭据只进 settings.yaml（gitignored），API 响应密钥一律掩码；
 report.yaml 每次保存前自动快照（versions/report/，保留 20 份）；artifacts 路径
 参数白名单校验；任务/运行错误返回"人话摘要 + error_detail 完整堆栈"。
+
+## F1~F4 功能增强（2026-09-11）
+
+| 项 | 契约 |
+|---|---|
+| F3 模型分档 | settings.yaml 可选段 `model_tiers: {fast: {...}, quality: {...}}`（每档只写覆盖字段 base_url/api_key/model/reasoning_effort，缺省继承 model 段）+ `tier_roles: {extract: fast, write: quality}`（extract=rag/web 抽取与规划器，write=大纲/分节/judge/修订）；两段都不配置时行为与单模型完全一致。`pipeline.llm`：`chat_json(..., tier=档名)`、`tier_for(role)`、`client(tier)` 按档缓存、`set_tier_override(档名)`（--model-tier 全局覆盖）、`stats()["tiers"]` 分档计数。生成页"模型档位"下拉（默认/快/质量）；前端缓存参数 R12 |
+| F1 数据库动态规划 | 见 datalayer 段 `planner.make_plan` / `sanitize_sql` 行：意图规划产出 db 查询（SQLite，schema 经 PRAGMA 读取），安全约束代码强制；plan.json 落查询全文可审计 |
+| F2 溯源可点击 | 仅渲染层（不进提示词/对账/字数）：html_report 附录行加锚点 `id="src-{fact_id}"`；text/views/table/risk 章节末尾追加 `<p class="sec-src">本章数据来源：…</p>`（编号为锚点链接，至多 12 条，无引用不显示）；notes 传全量 dict（含 cited_fact_ids），docx 渲染保持现状 |
+| F4 图表扩展 | `ChartTemplate.type` 增加 `scatter`（仅 table: 源，x 为数值列，y 多列多序列）与 `hist`（仅 table: 源，y 单数值列频数分布，`bins` 参数缺省 10）；新增字段 `ChartTemplate.bins`；单测 `tests/test_charts.py`；geology_demo_review 内嵌 Au 品位直方图实跑 |
 
 
 ## 产物目录（已稳定，报告详情页直接消费）

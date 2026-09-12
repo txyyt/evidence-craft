@@ -16,7 +16,7 @@ import argparse
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 from datalayer.settings import settings
 
@@ -42,13 +42,24 @@ def main(argv: list[str] | None = None,
     parser.add_argument("--project", default=None, help="运行参数：项目编号（地学等场景）")
     parser.add_argument("--period", default=None, help="运行参数：报告期次")
     parser.add_argument("--spec", default=None, help="报告结构 yaml 路径（覆盖报告类型缺省）")
+    parser.add_argument("--intent", default=None,
+                        help="写作意图一段话（意图规划：自动生成数据采集计划）")
+    parser.add_argument("--folder", default=None,
+                        help="本地资料文件夹（现场建语料库作为本次检索库）")
+    parser.add_argument("--reuse-data", default=None,
+                        help="复用某次运行的数据层结果（目录名，跳过规划与取数）"
+                             "——只调写作规则/模板时秒级进入写作阶段")
+    parser.add_argument("--model-tier", default=None,
+                        help="固定本次全部 LLM 调用走该档（settings.model_tiers "
+                             "的档名，如 fast/quality；缺省按 tier_roles 分工）")
     parser.add_argument("--data-only", action="store_true", help="只跑数据层")
     parser.add_argument("--full", action="store_true", help="全流程生成报告")
     args = parser.parse_args(argv)
 
     _progress = progress or (lambda *_: None)
-    from pipeline.llm import reset_stats, stats
+    from pipeline.llm import reset_stats, set_tier_override, stats
     reset_stats()
+    set_tier_override(args.model_tier)   # None 时清掉进程内遗留覆盖（server 同进程并发场景）
     _stage_t0 = datetime.now().timestamp()
 
     def emit(stage: str, msg: str, data: dict | None = None) -> None:
@@ -56,6 +67,7 @@ def main(argv: list[str] | None = None,
         now = datetime.now().timestamp()
         payload = {"llm_calls": stats()["calls"],
                    "llm_seconds": round(stats()["seconds"], 1),
+                   "llm_tiers": stats()["tiers"],
                    "stage_seconds": round(now - _stage_t0, 1)}
         _stage_t0 = now
         if data:
@@ -94,7 +106,47 @@ def main(argv: list[str] | None = None,
 
     emit("data", f"[1/6] 数据层：按报告类型「{sources.get('name', args.type_id)}」绑定拉取 {subject} 数据 ...")
     check_cancel()
-    doc, crosscheck = registry.run_data_layer(args.type_id, run_params)
+    plan = None
+    if args.reuse_data:
+        src = settings.resolve(settings.artifacts_dir) / args.reuse_data
+        if not (src / "facts.json").exists():
+            raise SystemExit(f"复用目录缺少 facts.json：{src}")
+        import shutil
+        for name in ("facts.json", "crosscheck_report.json", "plan.json"):
+            if (src / name).exists():
+                shutil.copy2(src / name, run_dir / name)
+        doc = json.loads((run_dir / "facts.json").read_text(encoding="utf-8"))
+        crosscheck = json.loads((run_dir / "crosscheck_report.json")
+                                .read_text(encoding="utf-8")) \
+            if (run_dir / "crosscheck_report.json").exists() else None
+        if (run_dir / "plan.json").exists():
+            plan = json.loads((run_dir / "plan.json").read_text(encoding="utf-8"))
+        emit("data", f"  [复用] 数据层结果取自 {args.reuse_data}"
+             f"（事实 {len(doc['facts'])} 条，跳过规划与取数）",
+             {"reuse": args.reuse_data})
+    elif args.intent or args.folder:
+        from datalayer.planner import make_plan, plan_to_bindings
+        emit("data", f"  意图规划：{args.intent or '（以资料文件夹为主题）'}"
+             + (f"｜本地资料 {args.folder}" if args.folder else ""))
+        plan = make_plan(spec, sources, args.intent or "", args.folder or None)
+        save(run_dir / "plan.json", plan)
+        emit("data", f"  采集计划（{plan['mode']}）：rag {len(plan.get('rag') or [])} 条"
+             f" / web {len(plan.get('web') or [])} 条"
+             f" / db {len(plan.get('db') or [])} 条"
+             f" / 沿用表格 {len(plan.get('tables_kept') or [])} 个"
+             + (f"｜语料 {plan['corpus']['n_fragments']} 片段（"
+                f"{'新建' if plan['corpus']['rebuilt'] else '缓存复用'}）"
+                if plan.get("corpus") else ""),
+             {"plan_mode": plan["mode"]})
+        for w in plan.get("warnings") or []:
+            print(f"  [规划告警] {w}")
+        doc, crosscheck = registry.run_data_layer(
+            args.type_id, run_params,
+            bindings_override=plan_to_bindings(plan, sources))
+        doc["meta"]["intent"] = plan.get("focus") or args.intent
+        doc["meta"]["plan_mode"] = plan["mode"]
+    else:
+        doc, crosscheck = registry.run_data_layer(args.type_id, run_params)
     save(run_dir / "facts.json", doc)
     if crosscheck:
         save(run_dir / "crosscheck_report.json", crosscheck)
@@ -128,36 +180,66 @@ def main(argv: list[str] | None = None,
         "template_fingerprint": registry.template_fingerprint(args.type_id),
         "params": run_params,
         "spec": "report.yaml" if not args.spec else str(args.spec),
+        "intent": doc["meta"].get("intent"),
+        "plan_mode": (plan or {}).get("mode"),
+        "reuse_data": args.reuse_data,
+        "model_tier": args.model_tier,
         "created_at": datetime.now().isoformat(timespec="seconds"),
         "title": spec_outline["title"]})
 
-    emit("sections", "[3/6] 分节生成（每条观点独立会话）...")
-    written = []
-    for i, view in enumerate(spec_outline["views"], 1):
+    emit("sections", "[3/6] 分节生成（按 spec 章节顺序：观点/综述/表格说明/风险）...")
+    written: list[dict[str, Any]] = []
+    texts: list[dict[str, Any]] = []
+    notes: dict[str, dict[str, Any]] = {}
+    risks: dict[str, Any] | None = None
+    for sec in spec.sections:
         check_cancel()
-        s = sections.gen_view(doc, view, spec)
-        written.append(s)
-        emit("sections", f"  ({i}/{len(spec_outline['views'])}) {s['heading']}",
-             {"slot_id": s["slot_id"], "heading": s["heading"]})
-
-    emit("sections", "[4/6] 预测说明 + 风险提示（镜像核心观点）...")
-    check_cancel()
-    forecast = sections.gen_forecast_note(doc, spec) if spec.section("table") \
+        if sec.kind == "views":
+            for i, view in enumerate(spec_outline["views"], 1):
+                check_cancel()
+                s = sections.gen_view(doc, view, spec)
+                written.append(s)
+                emit("sections", f"  (观点 {i}/{len(spec_outline['views'])}) {s['heading']}",
+                     {"slot_id": s["slot_id"], "heading": s["heading"]})
+        elif sec.kind == "text":
+            plan = (spec_outline.get("section_plans") or {}).get(sec.id) or {}
+            t = sections.gen_text_section(doc, sec, plan, spec)
+            texts.append(t)
+            emit("sections", f"  (综述) {sec.title} {len(t['body'])} 字",
+                 {"section_id": sec.id})
+        elif sec.kind == "table":
+            if doc["collections"].get("periods") and doc["collections"].get("consensus"):
+                note = sections.gen_forecast_note(doc, spec)   # 股票模板原路径
+            else:
+                note = sections.gen_table_note(doc, sec, spec)
+            notes[sec.id] = note
+            emit("sections", f"  (表格说明) {sec.title}", {"section_id": sec.id})
+        elif sec.kind == "risk":
+            risks = sections.gen_risks(doc, spec, views=written)
+            emit("sections", f"  (风险) {sec.title}", {"section_id": sec.id})
+    if spec.section("risk") is not None and risks is None:
+        check_cancel()
+        risks = sections.gen_risks(doc, spec, views=written)
+    if risks is None:
+        risks = {"body": "", "cited_fact_ids": []}
+    forecast = notes[spec.section("table").id] if spec.section("table") is not None \
         else {"body": "", "cited_fact_ids": []}
-    risks = sections.gen_risks(doc, spec, views=written) if spec.section("risk") \
-        else {"body": "", "cited_fact_ids": []}
-    save(run_dir / "sections.json", {"views": written,
-                                     "forecast": forecast, "risks": risks})
+    notes_bodies = {tid: n.get("body", "") for tid, n in notes.items()}
+    save(run_dir / "sections.json", {"views": written, "texts": texts,
+                                     "notes": notes, "risks": risks})
 
     emit("review", "[5/6] 对账 + 规则校验 + judge 评审（不合格退回重写，至多"
                    f"{int((settings.pipeline or {}).get('revise_rounds', 2))} 轮）...")
     check_cancel()
     rating = rule_rating(doc)
-    report = reconcile.reconcile(doc, spec_outline, written, forecast, risks, spec)
+    report = reconcile.reconcile(doc, spec_outline, written, forecast, risks, spec,
+                                 texts=texts, notes=notes)
     validate_report = validate.run(doc, spec_outline, written, forecast, risks,
-                                   rating, spec, crosscheck)
+                                   rating, spec, crosscheck,
+                                   texts=texts, notes=notes)
     judge_report = judge.run(doc, spec_outline, written, forecast, risks,
-                             report, validate_report, spec, rating)
+                             report, validate_report, spec, rating,
+                             texts=texts, notes=notes)
 
     def _print_status() -> None:
         print(f"  对账 {report['status'].upper()}（索引 {report['index_size']}）"
@@ -180,13 +262,17 @@ def main(argv: list[str] | None = None,
         emit("review", f"  —— 第 {round_no} 轮修订（{len(issues)} 个问题）——")
         for it in issues:
             print(f"    [{it.get('target')}] {it.get('problem')}")
-        written, forecast, risks, spec_outline = revise.apply(
-            doc, spec_outline, written, forecast, risks, judge_report, spec)
-        report = reconcile.reconcile(doc, spec_outline, written, forecast, risks, spec)
+        written, forecast, risks, spec_outline, texts, notes = revise.apply(
+            doc, spec_outline, written, forecast, risks, judge_report, spec,
+            texts=texts, notes=notes)
+        report = reconcile.reconcile(doc, spec_outline, written, forecast, risks, spec,
+                                     texts=texts, notes=notes)
         validate_report = validate.run(doc, spec_outline, written, forecast,
-                                       risks, rating, spec, crosscheck)
+                                       risks, rating, spec, crosscheck,
+                                       texts=texts, notes=notes)
         judge_report = judge.run(doc, spec_outline, written, forecast, risks,
-                                 report, validate_report, spec, rating)
+                                 report, validate_report, spec, rating,
+                                 texts=texts, notes=notes)
         _print_status()
         save(run_dir / f"revision_round{round_no}.json", {
             "reconcile": report["status"], "validate": validate_report,
@@ -194,6 +280,10 @@ def main(argv: list[str] | None = None,
                       "verdict": judge_report["verdict"],
                       "issues": judge_report.get("issues")}})
         round_no += 1
+
+    # 修订后的最终稿回写 sections.json（此前只存修订前版本，溯源不便）
+    save(run_dir / "sections.json", {"views": written, "texts": texts,
+                                     "notes": notes, "risks": risks})
 
     save(run_dir / "reconcile_report.json", report)
     save(run_dir / "validate_report.json", validate_report)
@@ -211,9 +301,15 @@ def main(argv: list[str] | None = None,
         from render.kline_chart import make_chart
         chart = make_chart("1.000001", run_dir / "index_kline.png")
         print(f"    头图已生成 {chart.name}")
+
+    from render.charts import render_charts
+    chart_jobs = render_charts(doc, spec, run_dir,
+                               lambda m: emit("render", m))
+
     html = html_report.render(
         doc, spec_outline, written, forecast, risks, spec,
-        rating=rating, kline_png=chart.name if chart else None)
+        rating=rating, kline_png=chart.name if chart else None,
+        texts=texts, notes=notes if notes else None, charts=chart_jobs)
     html_path = run_dir / "final.html"
     html_path.write_text(html, encoding="utf-8")
 
@@ -222,17 +318,25 @@ def main(argv: list[str] | None = None,
         from render.docx_report import render_docx
         render_docx(doc, spec_outline, written, forecast, risks, spec,
                     rating=rating, kline_png=str(chart) if chart else None,
-                    out_path=run_dir / "final.docx")
+                    out_path=run_dir / "final.docx",
+                    texts=texts, notes=notes_bodies if notes else None,
+                    charts=chart_jobs)
         print("    docx 已生成 final.docx")
     except Exception as e:  # noqa: BLE001
         print(f"    [警告] docx 渲染失败：{e}")
 
+    tiers = stats()["tiers"]
+    tier_line = "、".join(
+        f"{k}档 {v['calls']} 次/{round(v['seconds'], 1)}s（{v['model']}）"
+        for k, v in tiers.items())
     print(f"""
 完成。产物目录: {run_dir}
   报告标题: {spec_outline['title']}
   对账: {report['status'].upper()}    预览: {html_path}
+  LLM 分档调用: {tier_line or f"默认档 {stats()['calls']} 次"}
 """)
-    emit("render", f"完成。产物目录: {run_dir}", {"run_dir": str(run_dir)})
+    emit("render", f"完成。产物目录: {run_dir}",
+         {"run_dir": str(run_dir), "llm_tiers": tiers})
 
 
 if __name__ == "__main__":

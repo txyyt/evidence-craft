@@ -1,15 +1,16 @@
 """⑦ HTML 渲染：按 Spec v2 的章节列表驱动版式（kind 分发渲染块）。
 
 views → 标题 + 观点块；table → 标题 + 表格 + 说明文字；risk → 标题 + 风险行；
-text/figures → M7/M8 实现。评级由调用方传入（pipeline/rating.py），
-免责/说明段来自 spec.disclaimer，溯源附注与头图为通用能力。
+text → 标题 + 综述正文；figures → 标题 + 图件集（图N + 图注）。
+评级由调用方传入（pipeline/rating.py），免责/说明段来自 spec.disclaimer，
+溯源附注与头图为通用能力。
 """
 
 import html
 from datetime import datetime
 from typing import Any
 
-from pipeline.sections import render_table
+from pipeline.sections import render_table_sec
 from render.common import md_table_rows
 from template_factory.schema import SpecV2
 
@@ -20,7 +21,8 @@ TPL = """<!DOCTYPE html>
 <title>{title}</title>
 <style>
   body {{ font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
-         color: #222; max-width: 820px; margin: 0 auto; padding: 32px 24px;
+         color: #222; background: #fff; color-scheme: light;
+         max-width: 820px; margin: 0 auto; padding: 32px 24px;
          line-height: 1.75; }}
   .head {{ border-bottom: 3px solid #c0392b; padding-bottom: 14px; }}
   .meta {{ color: #777; font-size: 13px; margin-top: 8px; }}
@@ -29,12 +31,15 @@ TPL = """<!DOCTYPE html>
   h1 {{ font-size: 24px; margin: 6px 0; }}
   h2 {{ font-size: 17px; color: #c0392b; border-left: 4px solid #c0392b;
         padding-left: 10px; margin: 28px 0 10px; }}
+  h3 {{ font-size: 15px; color: #333; margin: 20px 0 8px; }}
   .view {{ margin: 14px 0; }}
   .view b {{ display: block; margin-bottom: 4px; }}
   table {{ border-collapse: collapse; width: 100%; margin: 10px 0; font-size: 14px; }}
   th, td {{ border: 1px solid #ccc; padding: 6px 10px; text-align: center; }}
   th {{ background: #f7f7f7; }}
   .table-note {{ font-size: 12px; color: #888; margin: 2px 0 10px; }}
+  .sec-src {{ font-size: 11px; color: #999; margin: 2px 0 16px; }}
+  .sec-src a {{ color: #a0743c; text-decoration: none; }}
   .risks p {{ margin: 4px 0; }}
   .appendix {{ font-size: 12px; color: #666; }}
   .appendix td {{ text-align: left; }}
@@ -68,7 +73,7 @@ TPL = """<!DOCTYPE html>
 </html>
 """
 
-APPENDIX_ROW = "    <tr><td>{id}</td><td>{name}</td><td>{value}{unit}</td><td>{source}</td><td>{as_of}</td></tr>"
+APPENDIX_ROW = "    <tr id=\"src-{id}\"><td>{id}</td><td>{name}</td><td>{value}{unit}</td><td>{source}</td><td>{as_of}</td></tr>"
 
 
 def _esc(s: Any) -> str:
@@ -88,34 +93,124 @@ def _md_table_html(md: str) -> tuple[str, str]:
     return table, (f'<p class="table-note">{_esc(note)}</p>' if note else "")
 
 
+def _heading_html(sec: Any) -> str:
+    """章节标题：heading 配置原样输出（范文式编号）；subheading 即本节标题时
+    不再出自动章节标题（避免"资源保障"+「1.2　资源保障」双重标题）；inline 无标题。"""
+    if sec.inline:
+        return ""
+    if sec.heading:
+        return f"  <h2>{_esc(sec.heading)}</h2>\n"
+    if sec.subheading:
+        return ""
+    return f"  <h2>{_esc(sec.title)}</h2>\n"
+
+
+def _subheading_html(sec: Any) -> str:
+    return f"  <h3>{_esc(sec.subheading)}</h3>\n" if sec.subheading else ""
+
+
+def _charts_html(jobs: list[dict[str, str]] | None) -> str:
+    return "\n".join(
+        f'  <img src="{_esc(j.get("src") or j["png"])}" alt="{_esc(j["caption"])}" '
+        f'style="width:100%; margin:12px 0 2px; border:1px solid #eee">\n'
+        f'  <p class="table-note">{_esc(j["caption"])}</p>'
+        for j in (jobs or []))
+
+
+def _sources_html(fact_ids: list[str] | None,
+                  facts_by_id: dict[str, dict[str, Any]]) -> str:
+    """章节末尾的"本章数据来源"小字行（仅渲染层，不进正文/对账/字数）。
+    编号即溯源附录锚点链接；无引用或引用不可解析的章节不加。"""
+    ids = [fid for fid in (fact_ids or []) if fid in facts_by_id]
+    if not ids:
+        return ""
+    items = []
+    for fid in ids[:12]:            # 行宽控制：至多列 12 条
+        f = facts_by_id[fid]
+        src = str(f.get("source", ""))
+        if len(src) > 46:
+            src = src[:45] + "…"
+        as_of = f"，截至 {f['as_of']}" if f.get("as_of") else ""
+        items.append(
+            f'<a href="#src-{_esc(fid)}">{_esc(fid)}</a>'
+            f' {_esc(f["name"])}={f["value"]}{_esc(f.get("unit", ""))}'
+            f'（{_esc(src)}{_esc(as_of)}）')
+    return ('  <p class="sec-src">本章数据来源：' + "；".join(items)
+            + "</p>\n")
+
+
 def _section_html(sec: Any, doc: dict[str, Any], written: list[dict[str, Any]],
                   forecast: dict[str, Any], risks: dict[str, Any],
-                  spec: SpecV2) -> str:
+                  spec: SpecV2, texts: dict[str, dict[str, Any]] | None = None,
+                  notes: dict[str, Any] | None = None,
+                  charts: dict[str, list[dict[str, str]]] | None = None,
+                  facts_by_id: dict[str, dict[str, Any]] | None = None) -> str:
+    texts = texts or {}
+    notes = notes or {}
+    charts = charts or {}
+    facts_by_id = facts_by_id or {}
+    head = _heading_html(sec) + _subheading_html(sec)
     if sec.kind == "views":
-        views_html = "\n".join(
-            f'  <div class="view"><b>{_esc(s["heading"])}</b>{_esc(s["body"])}</div>'
-            for s in written)
-        return f"  <h2>{_esc(sec.title)}</h2>\n{views_html}\n"
+        if sec.view_numbering:   # 范文式子节编号：3.1 / 3.2 …
+            views_html = "\n".join(
+                f'  <div class="view"><b>{_esc(sec.view_numbering)}.{i}　'
+                f'{_esc(s["heading"])}</b>{_esc(s["body"])}</div>'
+                for i, s in enumerate(written, 1))
+        else:
+            views_html = "\n".join(
+                f'  <div class="view"><b>{_esc(s["heading"])}</b>{_esc(s["body"])}</div>'
+                for s in written)
+        src = _sources_html(
+            [fid for s in written for fid in (s.get("cited_fact_ids") or [])],
+            facts_by_id)
+        return f"{head}{views_html}\n{src}{_charts_html(charts.get(sec.id))}"
     if sec.kind == "table":
-        table_html, table_note = _md_table_html(render_table(doc, spec))
-        return (f"  <h2>{_esc(sec.title)}</h2>\n{table_html}\n{table_note}\n"
-                f"  <p>{_esc(forecast['body'])}</p>\n")
+        table_html, table_note = _md_table_html(render_table_sec(doc, sec, spec))
+        n = notes.get(sec.id)
+        note_body = ((n.get("body") if isinstance(n, dict) else n) or
+                     forecast.get("body", ""))
+        note_ids = n.get("cited_fact_ids") if isinstance(n, dict) else None
+        src = _sources_html(note_ids, facts_by_id)
+        return (f"{head}{table_html}\n{table_note}\n"
+                f"  <p>{_esc(note_body)}</p>\n{src}"
+                f"{_charts_html(charts.get(sec.id))}")
     if sec.kind == "risk":
-        return (f'  <h2>{_esc(sec.title)}</h2>\n'
-                f'  <div class="risks"><p>{_esc(risks["body"])}</p></div>\n')
-    return ""  # text / figures：M7/M8 实现
+        return (f'{head}'
+                f'  <div class="risks"><p>{_esc(risks["body"])}</p></div>\n'
+                f'{_sources_html((risks or {}).get("cited_fact_ids"), facts_by_id)}'
+                f'{_charts_html(charts.get(sec.id))}')
+    if sec.kind == "text":
+        t = texts.get(sec.id)
+        if not t:
+            return ""
+        paras = "\n".join(f"  <p>{_esc(p.strip())}</p>"
+                          for p in t["body"].split("\n") if p.strip())
+        src = _sources_html(t.get("cited_fact_ids"), facts_by_id)
+        return f"{head}{paras}\n{src}{_charts_html(charts.get(sec.id))}"
+    if sec.kind == "figures":
+        jobs = charts.get(sec.id) or []
+        if not jobs:
+            return ""
+        return f"{head}{_charts_html(jobs)}\n"
+    return ""
 
 
 def render(doc: dict[str, Any], outline: dict[str, Any],
            sections: list[dict[str, Any]], forecast: dict[str, Any],
            risks: dict[str, Any], spec: SpecV2, rating: str,
-           kline_png: str | None = None) -> str:
+           kline_png: str | None = None,
+           texts: list[dict[str, Any]] | None = None,
+           notes: dict[str, Any] | None = None,
+           charts: dict[str, list[dict[str, str]]] | None = None) -> str:
     meta = doc["meta"]
+    texts_by_id = {t.get("section_id"): t for t in (texts or [])}
+    facts_by_id = {f["id"]: f for f in doc["facts"]}
     kline_img = (f'\n  <img src="{kline_png}" alt="近期走势K线" '
                  'style="width:100%; margin:14px 0 4px; border:1px solid #eee">'
                  if kline_png else "")
     body = "\n".join(filter(None, (
-        _section_html(sec, doc, sections, forecast, risks, spec)
+        _section_html(sec, doc, sections, forecast, risks, spec,
+                      texts_by_id, notes, charts, facts_by_id)
         for sec in spec.sections)))
     appendix = "\n".join(
         APPENDIX_ROW.format(id=_esc(f["id"]), name=_esc(f["name"]), value=f["value"],

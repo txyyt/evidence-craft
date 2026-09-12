@@ -11,10 +11,25 @@ import re
 from typing import Any
 
 TOLERANCE = 0.005
-# 排除紧贴字母的数字（"2026H1"的H1、"Q2"）与计数量词前的数字（"3家券商"、
-# "25件样品"——计数不是数据，数值对账只针对量值）
-_NUM_RE = re.compile(r"(?<![A-Za-z0-9])\d+(?:,\d{3})*(?:\.\d+)?(?![家条个月件份个批次组])")
+# 排除紧贴字母/数字的截断匹配（"4N8级"的4、"174号"回溯成"17"）与计数/
+# 日期单位词前的数字（"3家券商"、"25件样品"、"4月10日"——不是量值）。
+# 前瞻含 \d 是关键：多位数被计数词拦截后禁止回溯成更短的数（173种→17）。
+# 小数分支（\.\d+）后仅禁跟数字、允许字母——单位直接贴数的量值（"0.97g/t"
+# "4.3m"）若沿用整数分支的禁字母前瞻会回溯截断成 0/4，两分支各守各的。
+_NUM_RE = re.compile(
+    r"(?<![A-Za-z0-9])\d+(?:,\d{3})*"
+    r"(?:\.\d+(?!\d)|(?![A-Za-z\d家条个月日号页件份个批次组种类项处]))")
 _YEAR_RE = re.compile(r"^(19|20)\d{2}$")
+# 正文中的引用标注在数字提取前剥除——编号里的"01.02"会被读成数值 1.02，
+# 纯属对账噪音。两种形态：方括号/【】（[rag.01.02]、【web.3】），以及模型
+# 偏爱使用的全角括号+点分编号（（rag.05.15）（web.02.05、web.02.06）
+# （grades.SiO2≥99.995%.purity、grades.SiO2≥99.998%.purity）——特征：
+# 括号内无空白且含点号（总长放宽到 80，双引用连写也盖住）。
+_CITE_RE = re.compile(
+    r"[\[\【][^\]\】]{1,24}[\]\】]"
+    r"|(?=[（(][^\s（）()]*\.)[（(][^\s（）()]{1,80}[）)]")
+# 标准编号（DZ/T 0467、JC/T 1048—2018 等）：编号里的数字不是量值
+_STDNO_RE = re.compile(r"[A-Z]{1,4}/T\s?\d{3,4}(?:[—-]\d{4})?")
 # 模型偶发把公告号写成裸码（AN2026...，丢 ann. 前缀）——规范化而非丢弃
 _BARE_ANN_RE = re.compile(r"^(AN|AP)\d+$", re.IGNORECASE)
 
@@ -64,6 +79,8 @@ def _value_index(doc: dict[str, Any]) -> dict[str, float]:
 
 
 def _numbers_in(text: str) -> list[float]:
+    text = _CITE_RE.sub("", text)
+    text = _STDNO_RE.sub("", text)
     out = []
     for m in _NUM_RE.finditer(text):
         raw = m.group(0).replace(",", "")
@@ -104,10 +121,28 @@ def _ann_numbers(doc: dict[str, Any], cited: list[str]) -> set[str]:
     return out
 
 
+def _table_numbers(doc: dict[str, Any], tid: str) -> set[str]:
+    """系统生成表格（collections.tables[tid]）单元格中的全部数字串。
+
+    表格数字来自绑定数据源（xlsx 等，自带来源文献列），会原样渲染进报告——
+    说明文字引用本表单元格数字即视为有出处（否则意图规划换了联网查询后，
+    历史上恰好同值的联网事实不在了，表内数字反成对不上账的孤儿）。"""
+    data = (doc["collections"].get("tables") or {}).get(tid)
+    if not data:
+        return set()
+    out: set[str] = set()
+    for row in data.get("rows") or []:
+        for cell in row:
+            out.update(m.replace(",", "") for m in _NUM_RE.findall(str(cell)))
+    return out
+
+
 def reconcile(doc: dict[str, Any], outline: dict[str, Any],
               sections: list[dict[str, Any]],
               forecast: dict[str, Any], risks: dict[str, Any],
-              spec: Any = None) -> dict[str, Any]:
+              spec: Any = None,
+              texts: list[dict[str, Any]] | None = None,
+              notes: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
     # 章节名来自 Spec v2 的章节 id（judge issues 的 target 与其一一对应），
     # 各章节独立解析（table/risk 可缺省）；spec 缺省时沿用股票模板命名
     views_id = "core_views"
@@ -124,22 +159,25 @@ def reconcile(doc: dict[str, Any], outline: dict[str, Any],
     checks: list[dict[str, Any]] = []
 
     _KNOWN_PREFIXES = ("fin.", "quote.", "mainop.", "ann.", "newsind.",
-                       "consensus.", "forecast.")
+                       "consensus.", "forecast.", "rag.", "web.")
 
-    def check(name: str, body: str, cited: list[str]) -> None:
+    def check(name: str, body: str, cited: list[str],
+              extra_ok: set[str] | None = None) -> None:
         # 引用清洗：剥 []、裸公告号补 ann. 前缀（norm_citation）；
-        # 归一后仍不是任何已知前缀的记为 ignored（格式噪音），不算缺失
+        # 已知前缀或能命中数值索引的 id 均算可解析（xlsx 等泛化 adapter 的
+        # 三段式 id 如 consum.光伏.share 不在硬编码前缀里，但在索引中）；
+        # 归一后仍不认识的记为 ignored（格式噪音），不算缺失
         norm, ignored = [], []
         for c in cited:
             t = norm_citation(c)
             if t is None:
                 continue        # 模型偶发输出数字编号：直接丢弃
-            if t.startswith(_KNOWN_PREFIXES):
+            if t.startswith(_KNOWN_PREFIXES) or t in index:
                 norm.append(t)
             else:
                 ignored.append(t)
         bad_ids = [c for c in norm if not _cited_ok(c, index)]
-        ann_nums = _ann_numbers(doc, norm)
+        ann_nums = _ann_numbers(doc, norm) | (extra_ok or set())
         unknown, from_ann = [], 0
         for n in _numbers_in(body):
             if _match(n, index) is not None:
@@ -167,8 +205,22 @@ def reconcile(doc: dict[str, Any], outline: dict[str, Any],
                         if v["slot_id"] == s["slot_id"]), None)
             if src is not None and src != s["heading"]:
                 checks[-1]["heading_drift"] = {"outline": src, "written": s["heading"]}
-    check(table_id, forecast["body"], forecast.get("cited_fact_ids") or [])
+    # 多表格章节：逐节对账说明文字（该节表格的单元格数字视为有出处）；
+    # 未传 notes 时沿用单表格（forecast）路径
+    if notes:
+        for tid, note in notes.items():
+            sec = spec.section_by_id(tid) if spec is not None else None
+            tbl = sec.table if sec is not None else None
+            check(tid, note.get("body", ""), note.get("cited_fact_ids") or [],
+                  extra_ok=_table_numbers(doc, tbl) if tbl else None)
+    else:
+        sec = spec.section("table") if spec is not None else None
+        tbl = sec.table if sec is not None else None
+        check(table_id, forecast["body"], forecast.get("cited_fact_ids") or [],
+              extra_ok=_table_numbers(doc, tbl) if tbl else None)
     check(risk_id, risks["body"], risks.get("cited_fact_ids") or [])
+    for t in texts or []:
+        check(t["section_id"], t["body"], t.get("cited_fact_ids") or [])
 
     hard = any(c["cited_missing"] for c in checks)
     warn = any(c["unknown_numbers"] or c.get("heading_drift")

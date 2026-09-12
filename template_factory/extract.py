@@ -217,7 +217,11 @@ def _assemble(merged: dict[str, Any]) -> SpecV2:
                                 "kind": s["kind"]}
         if s.get("body_len"):
             item["check"] = {"body_len": s["body_len"]}
-        if s["kind"] == "views":
+        if s["kind"] == "views" and not s.get("view_slots"):
+            # views 没拆出槽位 → 降级为 text 章节（views 必须可执行，
+            # 宁可写成综述也不生成无法落槽位的伪 views）
+            item["kind"] = "text"
+        if item["kind"] == "views":
             slots = []
             seen_ids: set[str] = set()
             for i, v in enumerate(s.get("view_slots") or [], 1):

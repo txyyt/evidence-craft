@@ -151,6 +151,8 @@ def type_detail(type_id: str) -> dict:
         "judge_reference": sources.get("judge_reference") or "",
         "bindings": sources.get("bindings") or [],
         "spec": _load_spec_dict(tdir),
+        "has_draft": (tdir / "report.draft.yaml").exists(),
+        "draft_spec": _load_draft(tdir),
         "fingerprint": registry.template_fingerprint(type_id),
         "samples": sorted(p.name for p in samples_dir.iterdir())
         if samples_dir.exists() else [],
@@ -259,6 +261,10 @@ def load_demo() -> dict:
 async def extract(type_id: str, files: list[UploadFile] = File(...),
                   report_type: str = "") -> dict:
     tdir = _tdir(type_id)
+    if (tdir / "report.yaml").exists():
+        # 定稿结构不允许被提取覆盖（覆盖即毁掉已精修的 spec）
+        raise HTTPException(409, "该类型已有 report.yaml（已定稿）。"
+                                 "请新建一个空类型后再上传范文提取，避免覆盖。")
     samples_dir = tdir / "samples"
     samples_dir.mkdir(exist_ok=True)
     names = []
@@ -266,7 +272,8 @@ async def extract(type_id: str, files: list[UploadFile] = File(...),
         safe = Path(f.filename or "sample.txt").name
         (samples_dir / safe).write_bytes(await f.read())
         names.append(str(samples_dir / safe))
-    out = str(tdir / "report.yaml")
+    # 提取结果先落草稿，用户在页面上确认/微调结构后才定稿为 report.yaml
+    out = str(tdir / "report.draft.yaml")
 
     def fn(progress):
         from template_factory import extract as ext
@@ -284,6 +291,46 @@ async def extract(type_id: str, files: list[UploadFile] = File(...),
     import asyncio
     task = bus.start_job(fn, "extract", asyncio.get_running_loop())
     return {"job_id": task.id, "events_url": f"/api/types/{type_id}/jobs/{task.id}/events"}
+
+
+# ---------- 结构确认（提取草稿 → 用户确认 → 定稿 report.yaml）----------
+
+def _load_draft(tdir: Path) -> dict | None:
+    p = tdir / "report.draft.yaml"
+    if not p.exists():
+        return None
+    return yaml.safe_load(p.read_text(encoding="utf-8"))
+
+
+@router.get("/{type_id}/structure-draft")
+def get_structure_draft(type_id: str) -> dict:
+    draft = _load_draft(_tdir(type_id))
+    return {"exists": draft is not None, "spec": draft}
+
+
+class StructureConfirmIn(BaseModel):
+    spec: dict | None = None      # 缺省用草稿原样定稿；传编辑后的结构则以其为准
+
+
+@router.post("/{type_id}/structure-confirm")
+def structure_confirm(type_id: str, body: StructureConfirmIn) -> dict:
+    tdir = _tdir(type_id)
+    if (tdir / "report.yaml").exists():
+        raise HTTPException(409, "该类型已有定稿 report.yaml，无需重复确认")
+    spec_dict = body.spec if body.spec else _load_draft(tdir)
+    if not spec_dict:
+        raise HTTPException(404, "没有可确认的结构草稿（先上传范文提取）")
+    validated = _validate_spec(spec_dict)
+    _write_report(tdir, validated)
+    return {"ok": True, "spec": validated}
+
+
+@router.delete("/{type_id}/structure-draft")
+def discard_structure_draft(type_id: str) -> dict:
+    p = _tdir(type_id) / "report.draft.yaml"
+    if p.exists():
+        p.unlink()
+    return {"ok": True}
 
 
 @router.get("/{type_id}/jobs/{job_id}/events")

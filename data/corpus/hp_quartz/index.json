@@ -1,0 +1,234 @@
+{
+  "built_at": "2026-09-11T02:14:04",
+  "source_dir": "高纯石英矿报告资料",
+  "out": "data\\corpus\\hp_quartz\\fragments.json",
+  "n_files_ok": 32,
+  "n_files_failed": 0,
+  "n_fragments": 809,
+  "files": [
+    {
+      "file": "minerals-07-00189-v3.pdf",
+      "ok": true,
+      "pages": 19,
+      "empty_pages": 0,
+      "fragments": 93
+    },
+    {
+      "file": "report.pdf",
+      "ok": true,
+      "pages": 30,
+      "empty_pages": 4,
+      "fragments": 121
+    },
+    {
+      "file": "Resource-characteristic-purification and application of quartz-a-review.pdf",
+      "ok": true,
+      "pages": 20,
+      "empty_pages": 0,
+      "fragments": 162
+    },
+    {
+      "file": "东秦岭白岗岩制备4N8级高纯石英砂试验研究_王建平.pdf",
+      "ok": true,
+      "pages": 6,
+      "empty_pages": 0,
+      "fragments": 21
+    },
+    {
+      "file": "中国高纯石英资源开发利用现状及供需形势_颜玲亚.pdf",
+      "ok": true,
+      "pages": 6,
+      "empty_pages": 0,
+      "fragments": 19
+    },
+    {
+      "file": "休宁小阜脉石英矿杂质特征及其用作高纯石英原料的潜力.pdf",
+      "ok": true,
+      "pages": 0,
+      "empty_pages": 6,
+      "fragments": 0
+    },
+    {
+      "file": "全球高纯石英原料矿的资源分布与开发现状_王九一.pdf",
+      "ok": true,
+      "pages": 11,
+      "empty_pages": 0,
+      "fragments": 45
+    },
+    {
+      "file": "全球高纯石英市场的贸易模式与竞争分析.pdf",
+      "ok": true,
+      "pages": 0,
+      "empty_pages": 59,
+      "fragments": 0
+    },
+    {
+      "file": "全球高纯石英资源开发利用现状及供需分析_张海啟.pdf",
+      "ok": true,
+      "pages": 6,
+      "empty_pages": 0,
+      "fragments": 28
+    },
+    {
+      "file": "内蒙古某白伟晶岩纯化制备高纯石英砂_李育彪.pdf",
+      "ok": true,
+      "pages": 5,
+      "empty_pages": 0,
+      "fragments": 21
+    },
+    {
+      "file": "印度北部某4N8级高纯石英原料研究及其对我国的找矿启示_王九一.pdf",
+      "ok": true,
+      "pages": 15,
+      "empty_pages": 0,
+      "fragments": 58
+    },
+    {
+      "file": "国内高纯石英砂选矿与深加工研究现状_苏永刚.pdf",
+      "ok": true,
+      "pages": 3,
+      "empty_pages": 0,
+      "fragments": 10
+    },
+    {
+      "file": "尼日利亚某脉石英矿可选性试验研究_庞小朋.pdf",
+      "ok": true,
+      "pages": 3,
+      "empty_pages": 0,
+      "fragments": 15
+    },
+    {
+      "file": "我国石英资源的开发利用特点及应用进展_李作敏.pdf",
+      "ok": true,
+      "pages": 9,
+      "empty_pages": 0,
+      "fragments": 38
+    },
+    {
+      "file": "我国脉石英资源开发利用现状及供需分析_焦丽香.pdf",
+      "ok": true,
+      "pages": 4,
+      "empty_pages": 0,
+      "fragments": 17
+    },
+    {
+      "file": "我国高纯石英产业战略布局思考_王自国.pdf",
+      "ok": true,
+      "pages": 3,
+      "empty_pages": 0,
+      "fragments": 13
+    },
+    {
+      "file": "湖北省硅质原料矿(高纯石英矿)勘查开发现状及建议_邹本利.pdf",
+      "ok": true,
+      "pages": 8,
+      "empty_pages": 0,
+      "fragments": 27
+    },
+    {
+      "file": "滇东北寿山地区发现一潜在大型石英砂岩矿（14453万t）_李致伟.pdf",
+      "ok": true,
+      "pages": 2,
+      "empty_pages": 0,
+      "fragments": 5
+    },
+    {
+      "file": "由高纯石英找矿问题引发的矿产资源分类新思考——筑牢新质生产力与资源安全之基_王登红.pdf",
+      "ok": true,
+      "pages": 10,
+      "empty_pages": 0,
+      "fragments": 18
+    },
+    {
+      "file": "皖南地区石英岩型高纯石英原料矿的发现及其意义_徐波.pdf",
+      "ok": true,
+      "pages": 2,
+      "empty_pages": 0,
+      "fragments": 4
+    },
+    {
+      "file": "硅外延用三氯氢硅-编制说明.pdf",
+      "ok": true,
+      "pages": 0,
+      "empty_pages": 12,
+      "fragments": 0
+    },
+    {
+      "file": "纯净胜瑾瑜__贵若冠上珠——解读高纯石英_汪灵.pdf",
+      "ok": true,
+      "pages": 12,
+      "empty_pages": 0,
+      "fragments": 21
+    },
+    {
+      "file": "美国Spruce_Pine与新疆阿尔泰地区高纯石英伟晶岩的对比研究_张晔.pdf",
+      "ok": true,
+      "pages": 10,
+      "empty_pages": 0,
+      "fragments": 35
+    },
+    {
+      "file": "脉石英提纯制备高纯石英砂及其特性研究：以南非、津巴布韦、老挝和巴基斯坦脉石英矿为例_夏梅.pdf",
+      "ok": true,
+      "pages": 2,
+      "empty_pages": 0,
+      "fragments": 4
+    },
+    {
+      "file": "试论高纯石英原料矿的找矿方向_王登红.pdf",
+      "ok": true,
+      "pages": 7,
+      "empty_pages": 0,
+      "fragments": 32
+    },
+    {
+      "file": "鄂东南付家山脉石英矿杂质特征及其用作高纯石英原料的潜力.pdf",
+      "ok": true,
+      "pages": 0,
+      "empty_pages": 10,
+      "fragments": 0
+    },
+    {
+      "file": "阿尔泰成矿省的成矿系列与成矿规律_王登红.pdf",
+      "ok": true,
+      "pages": 1,
+      "empty_pages": 0,
+      "fragments": 2
+    },
+    {
+      "file": "高纯石英生产公司终稿.pdf",
+      "ok": true,
+      "pages": 0,
+      "empty_pages": 10,
+      "fragments": 0
+    },
+    {
+      "file": "高纯石英砂行业报告.pdf",
+      "ok": true,
+      "pages": 0,
+      "empty_pages": 31,
+      "fragments": 0
+    },
+    {
+      "file": "高纯石英砂行业深度报告-光伏用高纯石英砂供需或偏紧.pdf",
+      "ok": true,
+      "pages": 0,
+      "empty_pages": 9,
+      "fragments": 0
+    },
+    {
+      "file": "高纯石英行业分析.pdf",
+      "ok": true,
+      "pages": 0,
+      "empty_pages": 25,
+      "fragments": 0
+    },
+    {
+      "file": "高纯石英行业分析1.pdf",
+      "ok": true,
+      "pages": 0,
+      "empty_pages": 25,
+      "fragments": 0
+    }
+  ]
+}

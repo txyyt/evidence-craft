@@ -1,0 +1,147 @@
+name: 国内高纯石英研究报告
+description: >-
+  单矿种矿产资源研究综述：本地文献库（高纯石英矿报告资料，809 片段）+
+  联网搜索（百度/搜狗 keyless 通道）+ 资料库提取表格；图表数字同源可溯源
+status: published
+params_schema:
+  project: 报告主题（缺省"国内高纯石英"）
+vocabulary: {}
+features:
+  kline_chart: false
+crosschecks: []
+judge_reference: config/reference/hp_quartz_reference.md
+bindings:
+- need: corpus_resource
+  adapter: rag_client
+  params:
+    query: 高纯石英 资源 分布 矿床 类型 储量 脉石英 伟晶岩
+    mock_fragments: data/corpus/hp_quartz/fragments.json
+    top_k: 6
+- need: corpus_exploration
+  adapter: rag_client
+  params:
+    query: 高纯石英 找矿 勘查 进展 矿点 提纯 技术攻关
+    mock_fragments: data/corpus/hp_quartz/fragments.json
+    top_k: 6
+- need: corpus_consumption
+  adapter: rag_client
+  params:
+    query: 高纯石英 应用 消费 结构 光伏 半导体 光纤 占比
+    mock_fragments: data/corpus/hp_quartz/fragments.json
+    top_k: 5
+- need: corpus_supply
+  adapter: rag_client
+  params:
+    query: 高纯石英 供需 对外依存 进口 产能 企业
+    mock_fragments: data/corpus/hp_quartz/fragments.json
+    top_k: 6
+- need: corpus_policy
+  adapter: rag_client
+  params:
+    query: 高纯石英 战略 矿产 新矿种 政策 建议
+    mock_fragments: data/corpus/hp_quartz/fragments.json
+    top_k: 4
+- need: web_policy
+  adapter: web_search
+  params:
+    query: 高纯石英矿 新矿种 自然资源部 公告 第174个
+    top_k: 8
+    fetch_pages: 4
+    cache_ttl_h: 12
+- need: web_industry
+  adapter: web_search
+  params:
+    query: 高纯石英 产能 扩产 石英股份 2025
+    top_k: 8
+    fetch_pages: 3
+    cache_ttl_h: 12
+- need: web_price
+  adapter: web_search
+  params:
+    query: 高纯石英砂 价格 供需 2025
+    top_k: 6
+    fetch_pages: 3
+    cache_ttl_h: 12
+- need: prov_table
+  adapter: xlsx_table
+  params:
+    path: data/hp_quartz/tables.xlsx
+    sheet: 分省资源储量
+    id_prefix: prov
+    id_column: 省区
+    name_template: '{省区}{矿种}资源储量'
+    value_columns:
+    - column: 资源储量(万t)
+      key: reserve
+      unit: 万t
+    table_columns:
+    - 省区
+    - 矿种
+    - 资源储量(万t)
+    table_id: prov_table
+- need: consum_table
+  adapter: xlsx_table
+  params:
+    path: data/hp_quartz/tables.xlsx
+    sheet: 应用消费结构
+    id_prefix: consum
+    id_column: 应用领域
+    name_template: '{应用领域}用量占比'
+    value_columns:
+    - column: 用量占比(%)
+      key: share
+      unit: "%"
+    table_columns:
+    - 应用领域
+    - 用量占比(%)
+    table_id: consum_table
+- need: companies_table
+  adapter: xlsx_table
+  params:
+    path: data/hp_quartz/tables.xlsx
+    sheet: 主要企业
+    id_prefix: company
+    id_column: 企业
+    name_template: '{企业}'
+    value_columns: []
+    table_columns:
+    - 企业
+    - 所属国家/地区
+    - 产品或产能
+    table_id: companies_table
+- need: grades_table
+  adapter: xlsx_table
+  params:
+    path: data/hp_quartz/tables.xlsx
+    sheet: 分等级产量
+    id_prefix: grades
+    id_column: 纯度等级
+    name_template: '{纯度等级}全球产量'
+    value_columns:
+    - column: 2019年全球产量(万t)
+      key: output
+      unit: 万t
+    - column: 纯度下限(%)
+      key: purity
+      unit: "%"
+    table_columns:
+    - 纯度等级
+    - 纯度下限(%)
+    - 2019年全球产量(万t)
+    table_id: grades_table
+- need: domestic_table
+  adapter: xlsx_table
+  params:
+    path: data/hp_quartz/tables.xlsx
+    sheet: 国内产量走势
+    id_prefix: domestic
+    id_column: 年份
+    name_template: '{年份}我国4N5级及以上高纯石英产量'
+    value_columns:
+    - column: 我国4N5级及以上高纯石英产量(万t)
+      key: output
+      unit: 万t
+    table_columns:
+    - 年份
+    - 我国4N5级及以上高纯石英产量(万t)
+    table_id: domestic_table

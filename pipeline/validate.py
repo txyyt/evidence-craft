@@ -6,9 +6,12 @@
 """
 
 import re
+from datetime import datetime
 from typing import Any
 
 from template_factory.schema import SpecV2
+
+_now = datetime.now()
 
 
 def _charlen(text: str) -> int:
@@ -23,7 +26,9 @@ def _range(check: Any, key: str, default: tuple[int, int]) -> tuple[int, int]:
 def run(doc: dict[str, Any], outline: dict[str, Any],
         views: list[dict[str, Any]], forecast: dict[str, Any],
         risks: dict[str, Any], rating: str, spec: SpecV2,
-        crosscheck: dict[str, Any] | None = None) -> dict[str, Any]:
+        crosscheck: dict[str, Any] | None = None,
+        texts: list[dict[str, Any]] | None = None,
+        notes: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
     items: list[dict[str, Any]] = []
     views_sec = spec.section("views")
     table_sec = spec.section("table")
@@ -60,22 +65,71 @@ def run(doc: dict[str, Any], outline: dict[str, Any],
         rule(f"structure.{v['slot_id']}.body_len", blo <= n <= bhi,
              f"正文 {n} 字（要求 {blo}~{bhi}）", metric=n)
 
-    # —— 表格节说明文字 ——
-    flo, fhi = _range(table_sec.check if table_sec else None, "body_len", (60, 200))
-    rule("length.forecast", flo <= _charlen(forecast["body"]) <= fhi,
-         f"预测说明 {len(forecast['body'])} 字")
+    # —— 表格节说明文字（多表格逐节校验；未传 notes 沿用单表格路径）——
+    if notes:
+        table_secs = {s.id: s for s in spec.sections_of("table")}
+        for tid, note in notes.items():
+            sec = table_secs.get(tid)
+            if sec is None:
+                continue
+            flo, fhi = _range(sec.check, "body_len", (60, 200))
+            rule(f"length.{tid}", flo <= _charlen(note.get("body", "")) <= fhi,
+                 f"{sec.title} 说明 {len(note.get('body', ''))} 字")
+    elif table_sec is not None:
+        flo, fhi = _range(table_sec.check, "body_len", (60, 200))
+        rule("length.forecast", flo <= _charlen(forecast["body"]) <= fhi,
+             f"预测说明 {len(forecast['body'])} 字")
 
-    # —— 风险提示（参数：risk 章节 check）——
-    clo, chi = _range(risk_sec.check if risk_sec else None, "count", (3, 5))
-    suffix = (risk_sec.check.item_suffix if risk_sec else None) or "风险"
-    # 注意 is not None：min_shaped=0 是合法配置（不要求结尾词），不能 or 回退
-    min_shaped = risk_sec.check.min_shaped if risk_sec and \
-        risk_sec.check.min_shaped is not None else 3
-    risk_items = [r for r in re.split(r"[;；]", risks["body"]) if r.strip()]
-    rule("risk.count", clo <= len(risk_items) <= chi, f"{len(risk_items)} 条")
-    risk_shaped = sum(1 for r in risk_items if r.strip().endswith(suffix))
-    rule("risk.format", risk_shaped >= min_shaped,
-         f"{risk_shaped}/{len(risk_items)} 条以'{suffix}'结尾")
+    # —— 综述/图件章节说明文字（text 章节，参数在各章节 check.body_len）——
+    text_secs = {s.id: s for s in spec.sections_of("text")}
+    for t in texts or []:
+        sec = text_secs.get(t.get("section_id"))
+        if sec is None:
+            continue
+        tlo, thi = _range(sec.check, "body_len", (150, 1600))
+        n = _charlen(t["body"])
+        rule(f"length.{sec.id}", tlo <= n <= thi,
+             f"{sec.title} 正文 {n} 字（要求 {tlo}~{thi}）", metric=n)
+
+    # —— 时效性（text 章节 freshness_days：被引事实 as_of 距今不超 N 天，warn 级）——
+    facts_by_id = {f["id"]: f for f in doc["facts"]}
+
+    def _as_of_date(v: Any):
+        v = str(v or "")
+        if "检索时点" in v:
+            return _now
+        m = re.match(r"(\d{4})[-/年](\d{1,2})?", v)
+        if m:
+            return datetime(int(m.group(1)), min(int(m.group(2) or 12), 12), 1)
+        return None
+
+    for t in texts or []:
+        sec = text_secs.get(t.get("section_id"))
+        if sec is None or not sec.freshness_days:
+            continue
+        stale = []
+        for fid in t.get("cited_fact_ids") or []:
+            f = facts_by_id.get(fid)
+            d = _as_of_date(f.get("as_of")) if f else None
+            if d and (_now - d).days > sec.freshness_days:
+                stale.append(f"{fid}({f.get('as_of')})")
+        if stale:
+            items.append({"rule": f"freshness.{sec.id}", "status": "warn",
+                          "detail": f"{sec.title} 引用超期事实 "
+                                    f"{'、'.join(stale[:5])}（要求 ≤{sec.freshness_days} 天）"})
+
+    # —— 风险提示（参数：risk 章节 check；章节缺省则整组跳过）——
+    if risk_sec is not None:
+        clo, chi = _range(risk_sec.check, "count", (3, 5))
+        suffix = risk_sec.check.item_suffix or "风险"
+        # 注意 is not None：min_shaped=0 是合法配置（不要求结尾词），不能 or 回退
+        min_shaped = risk_sec.check.min_shaped \
+            if risk_sec.check.min_shaped is not None else 3
+        risk_items = [r for r in re.split(r"[;；]", risks["body"]) if r.strip()]
+        rule("risk.count", clo <= len(risk_items) <= chi, f"{len(risk_items)} 条")
+        risk_shaped = sum(1 for r in risk_items if r.strip().endswith(suffix))
+        rule("risk.format", risk_shaped >= min_shaped,
+             f"{risk_shaped}/{len(risk_items)} 条以'{suffix}'结尾")
 
     # —— 术语：禁用词（spec.forbidden_words）——
     hits = [w for w in spec.forbidden_words if w in all_text]

@@ -23,9 +23,16 @@ class Settings:
         self.cache: dict = cfg["cache"]
         self.artifacts_dir: str = cfg["artifacts_dir"]
         self.model: dict = cfg.get("model", {})
+        # F3 模型分档（可选段）：model_tiers.{fast,quality} 只写覆盖字段
+        # （base_url/api_key/model/reasoning_effort），缺省字段继承 model 段；
+        # tier_roles 指定调用角色→档位（缺省 extract=fast，write=quality）。
+        # 两段都不配置时一切行为与单模型完全一致。
+        self.model_tiers: dict = cfg.get("model_tiers") or {}
+        self.tier_roles: dict = cfg.get("tier_roles") or {}
         self.pipeline: dict = cfg.get("pipeline", {})     # 流水线参数（judge 门槛/修订轮数）
         self.databases: dict = cfg.get("databases", {})   # 全局连接：数据库（凭据只放本文件）
         self.rag: dict = cfg.get("rag", {})               # 全局连接：外部检索服务
+        self.web_search: dict = cfg.get("web_search", {})  # 全局连接：付费搜索 API（可选）
 
     def resolve(self, p: str) -> Path:
         path = Path(p)

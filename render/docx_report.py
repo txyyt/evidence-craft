@@ -15,7 +15,7 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Cm, Pt, RGBColor
 
-from pipeline.sections import render_table
+from pipeline.sections import render_table_sec
 from render.common import md_table_rows
 from template_factory.schema import SpecV2
 
@@ -73,10 +73,21 @@ def _add_table(doc: Document, rows: list[list[str]], small: bool = False) -> Non
     sp.paragraph_format.line_spacing = Pt(6)
 
 
+def _cn_no(i: int) -> str:
+    """章节序号：一~十，之后用阿拉伯数字（章节多的报告不炸编号）。"""
+    return _CN_NUM[i - 1] if 1 <= i <= len(_CN_NUM) else str(i)
+
+
 def render_docx(doc: dict[str, Any], outline: dict[str, Any],
                 sections: list[dict[str, Any]], forecast: dict[str, Any],
                 risks: dict[str, Any], spec: SpecV2, rating: str,
-                kline_png: str | None, out_path: Path) -> Path:
+                kline_png: str | None, out_path: Path,
+                texts: list[dict[str, Any]] | None = None,
+                notes: dict[str, str] | None = None,
+                charts: dict[str, list[dict[str, str]]] | None = None) -> Path:
+    texts_by_id = {t.get("section_id"): t for t in (texts or [])}
+    notes = notes or {}
+    charts = charts or {}
     d = Document()
     normal = d.styles["Normal"]
     normal.font.name = FONT
@@ -108,33 +119,70 @@ def render_docx(doc: dict[str, Any], outline: dict[str, Any],
         _run(p, f"图{fig_no}　近期大盘走势（上证指数，供行情参照）",
              size=9, color="888888", center=True)
 
+    def _add_charts(jobs: list[dict[str, str]] | None) -> None:
+        """图件（正文后内嵌或图件集），图号全文连续。"""
+        nonlocal fig_no
+        for j in jobs or []:
+            fig_no += 1
+            p = d.add_paragraph()
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            p.paragraph_format.keep_with_next = True  # 图与图题不分开
+            try:
+                p.add_run().add_picture(j["png"], width=Cm(15.5))
+            except Exception:  # noqa: BLE001 —— 图片缺失不炸渲染
+                continue
+            p = d.add_paragraph()
+            _run(p, f"图{fig_no}　{j['caption']}",
+                 size=9, color="888888", center=True)
+
     table_no = 0
     view_no = 0
     for i, sec in enumerate(spec.sections, 1):
-        _heading(d, f"{_CN_NUM[i - 1]}、{sec.title}")
+        # 内嵌位无章节标题；subheading 即本节标题时同理（避免双重标题）
+        if sec.inline or (sec.subheading and not sec.heading):
+            pass
+        else:
+            _heading(d, sec.heading or f"{_cn_no(i)}、{sec.title}")
+        if sec.subheading:
+            p = d.add_paragraph()
+            p.paragraph_format.space_before = Pt(8)
+            p.paragraph_format.space_after = Pt(4)
+            p.paragraph_format.keep_with_next = True
+            _run(p, sec.subheading, size=12, bold=True)
         if sec.kind == "views":
             for s in sections:
                 view_no += 1
                 p = d.add_paragraph()
-                _run(p, f"{view_no}、{s['heading']}", size=11, bold=True)
+                label = (f"{sec.view_numbering}.{view_no}　"
+                         if sec.view_numbering else f"{view_no}、")
+                _run(p, f"{label}{s['heading']}", size=11, bold=True)
                 p.paragraph_format.space_before = Pt(8)
                 p.paragraph_format.keep_with_next = True  # 小标题与正文同页
                 p = d.add_paragraph()
                 _run(p, s["body"])
         elif sec.kind == "table":
-            rows, _note = md_table_rows(render_table(doc, spec))
+            rows, _note = md_table_rows(render_table_sec(doc, sec, spec))
             if rows:
                 table_no += 1
                 p = d.add_paragraph()
                 p.paragraph_format.keep_with_next = True  # 表题与表格同页
                 _run(p, f"表{table_no}　{sec.title}", size=9, bold=True, center=True)
                 _add_table(d, rows)
-            if forecast.get("body"):
+            note_body = notes.get(sec.id, forecast.get("body", ""))
+            if note_body:
                 d.add_paragraph()
-                _run(d.add_paragraph(), forecast["body"])
+                _run(d.add_paragraph(), note_body)
         elif sec.kind == "risk":
             _run(d.add_paragraph(), risks.get("body", ""))
-        # text / figures：与 html 版一致，M7/M8 后续交付
+        elif sec.kind == "text":
+            t = texts_by_id.get(sec.id)
+            if t:
+                for para in t["body"].split("\n"):
+                    if para.strip():
+                        _run(d.add_paragraph(), para.strip())
+        # 图件：figures 章节为图件集，text/views/risk 章节正文后内嵌
+        # （范文形态：图随文走），图号全文连续
+        _add_charts(charts.get(sec.id))
 
     # 数据溯源附录
     _heading(d, "附：数据溯源")

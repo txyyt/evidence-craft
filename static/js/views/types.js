@@ -75,6 +75,48 @@
         const extracting = ref(false);
         const extractFiles = ref([]);
 
+        /* ---- 结构确认（提取草稿 → 用户确认 → 定稿）---- */
+        const draftSpec = ref(null);
+        const confirming = ref(false);
+        const KIND_LABELS = { views: '观点', table: '表格', risk: '风险',
+          text: '综述', figures: '图件' };
+        const kindLabel = (k) => KIND_LABELS[k] || k;
+
+        function openDraft(d) {
+          // 有草稿且未定稿 → 进入结构确认；已定稿则不看草稿
+          draftSpec.value = (d.has_draft && !d.spec) ? d.draft_spec : null;
+        }
+        function moveDraftSec(i, delta) {
+          const arr = draftSpec.value.sections;
+          const j = i + delta;
+          if (j < 0 || j >= arr.length) return;
+          [arr[i], arr[j]] = [arr[j], arr[i]];
+        }
+        function delDraftSec(i) { draftSpec.value.sections.splice(i, 1); }
+        function draftSecSummary(s) {
+          if (s.kind === 'views') return `${(s.view_slots || []).length} 个视角槽位`;
+          if (s.kind === 'table') return `表格 ${s.table || ''}`;
+          if (s.kind === 'figures') return `${(s.charts || []).length} 张图`;
+          return '正文';
+        }
+        async function confirmStructure() {
+          confirming.value = true;
+          try {
+            await EC.api.post(`/api/types/${curId.value}/structure-confirm`,
+              { spec: draftSpec.value });
+            EC.toast('结构已定稿！可在「结构」页签继续精修，并配置数据来源', 'success');
+            draftSpec.value = null;
+            open(curId.value);
+          } catch (e) { EC.toast('确认失败：' + e.message, 'error'); }
+          finally { confirming.value = false; }
+        }
+        async function discardDraft() {
+          try { await EC.api.del(`/api/types/${curId.value}/structure-draft`); }
+          catch (e) { /* 草稿本就不存在时忽略 */ }
+          draftSpec.value = null;
+          EC.toast('已放弃本次提取草稿', 'info');
+        }
+
         /* ---- 对话 ---- */
         const chatInput = ref('');
         const chatting = ref(false);
@@ -124,6 +166,7 @@
           if (d.samples.length) replaySample.value = d.samples[0];
           for (const k of Object.keys(d.params_schema || {}))
             if (!(k in runParams)) runParams[k] = '';
+          openDraft(d);
         }
 
         function backToList() { cur.value = null; curId.value = ''; loadList(); }
@@ -559,6 +602,8 @@
           list, loadingList, showNew, newForm, creating, copyForm,
           cur, curId, tab, dirty, saving, editSpec, advanced, advText,
           showDelete, deleteFiles, busyLog, extracting, extractFiles,
+          draftSpec, confirming, confirmStructure, discardDraft,
+          moveDraftSec, delDraftSec, draftSecSummary, kindLabel,
           chatInput, chatting, pending, sendChat, applyPatch,
           leftSample, sampleTree, fewshotTarget, selectedText,
           loadSample, grabFewshot, startFewshotPick,
@@ -814,11 +859,39 @@
                 </n-upload>
                 <n-button size="small" type="primary" :loading="extracting" @click="startExtract">
                   {{ extracting ? '提取中…' : '上传并提取结构' }}</n-button>
-                <span class="ec-muted">重新提取会覆盖当前结构（旧版自动留痕）</span>
+                <span class="ec-muted">提取结果先作为草稿，在下方确认后才定稿为报告结构</span>
               </n-space>
               <div v-if="busyLog.length" class="ec-log" style="margin-top:8px">
                 <div v-for="(l, i) in busyLog" :key="i">{{ l }}</div>
               </div>
+            </n-card>
+            <!-- 结构确认：提取草稿 → 用户核对/微调 → 定稿 report.yaml -->
+            <n-card size="small" v-if="draftSpec" class="ec-card"
+                    title="结构确认（第二步）：核对提取出的章节结构">
+              <n-alert :bordered="false" type="info" size="small" style="margin-bottom:10px">
+                系统已从范文提取出章节结构。请核对是否与范文一致：可修改标题、调整顺序、
+                删除多余章节。<b>确认后即生成报告类型定稿</b>（之后可在「结构」页签继续精修，
+                在「数据来源」页签配置数据）。
+              </n-alert>
+              <div v-for="(s, i) in draftSpec.sections" :key="i"
+                   style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px dashed var(--ec-line)">
+                <span class="ec-mono ec-muted" style="width:26px">{{ i + 1 }}.</span>
+                <n-tag size="small" :type="s.kind === 'views' ? 'warning' : s.kind === 'table' ? 'success' : 'info'">
+                  {{ kindLabel(s.kind) }}</n-tag>
+                <n-input v-model:value="s.title" size="small" style="width:300px" placeholder="章节标题" />
+                <span class="ec-mono ec-muted" style="font-size:12px">{{ s.id }}</span>
+                <span class="ec-muted" style="font-size:12px">{{ draftSecSummary(s) }}</span>
+                <span style="flex:1"></span>
+                <n-button size="tiny" quaternary @click="moveDraftSec(i, -1)">上移</n-button>
+                <n-button size="tiny" quaternary @click="moveDraftSec(i, 1)">下移</n-button>
+                <n-button size="tiny" quaternary type="error" @click="delDraftSec(i)">删除</n-button>
+              </div>
+              <n-space size="small" style="margin-top:12px">
+                <n-button size="small" type="primary" :loading="confirming" @click="confirmStructure">
+                  确认结构，生成报告类型</n-button>
+                <n-button size="small" quaternary @click="discardDraft">放弃本次提取</n-button>
+                <span class="ec-muted">共 {{ draftSpec.sections.length }} 个章节（含观点槽位 {{ draftSpec.sections.filter(s => s.kind === 'views').reduce((a, s) => a + (s.view_slots || []).length, 0) }} 个）</span>
+              </n-space>
             </n-card>
             <n-card size="small" v-if="cur.samples.length">
               <n-space size="small" align="center" style="margin-bottom:8px">

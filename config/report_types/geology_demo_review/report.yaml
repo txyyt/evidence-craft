@@ -58,6 +58,15 @@ sections:
       点出样品数量与品位分布特征；文字中引用的数字必须与表格一致。
     check:
       body_len: [30, 150]
+    charts:
+      - id: chart_au_hist
+        title: 本期化验 Au 品位分布
+        type: hist
+        source: table:assay_table
+        y: [Au品位]
+        unit: g/t
+        bins: 8
+        note: 依化验台账 Au 品位数据分箱计数（频数）
   - id: uncertainty
     title: 不确定性说明
     kind: risk
