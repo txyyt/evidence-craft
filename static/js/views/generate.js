@@ -238,9 +238,11 @@
             render: (r) => r.verdict
               ? h(NA.NTag, { size: 'small', type: r.verdict === 'pass' ? 'success' : 'error' },
                   { default: () => r.verdict.toUpperCase() }) : '—' },
-          { title: '操作', key: 'act', width: 200,
+          { title: '操作', key: 'act', width: 250,
             render: (r) => h(NA.NSpace, { size: 'small' }, { default: () => [
               h(NA.NButton, { size: 'tiny', onClick: () => viewRun(r.name) }, { default: () => '查看' }),
+              h(NA.NButton, { size: 'tiny', tag: 'a', attrType: 'a',
+                href: '/#/run?dir=' + encodeURIComponent(r.name) }, { default: () => '反馈' }),
               h(NA.NButton, { size: 'tiny', tag: 'a', attrType: 'a',
                 href: `/api/runs/report?dir=${encodeURIComponent(r.name)}&format=docx`,
                 type: 'primary' }, { default: () => 'docx' }),

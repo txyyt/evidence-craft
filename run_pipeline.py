@@ -42,6 +42,12 @@ def main(argv: list[str] | None = None,
     parser.add_argument("--project", default=None, help="运行参数：项目编号（地学等场景）")
     parser.add_argument("--period", default=None, help="运行参数：报告期次")
     parser.add_argument("--spec", default=None, help="报告结构 yaml 路径（覆盖报告类型缺省）")
+    parser.add_argument("--tree", default=None,
+                        help="结构树 id（config/trees/<id>/tree.yaml；树模式：结构从树加载，"
+                             "与 --intent/--folder/--plan 组合规划取数）")
+    parser.add_argument("--plan", default=None,
+                        help="数据采集计划（--tree 模式：树目录 plans/ 下的计划文件名或路径；"
+                             "给出时跳过规划直接执行该计划）")
     parser.add_argument("--intent", default=None,
                         help="写作意图一段话（意图规划：自动生成数据采集计划）")
     parser.add_argument("--folder", default=None,
@@ -82,12 +88,25 @@ def main(argv: list[str] | None = None,
     from template_factory.schema import load_spec
     from datalayer import registry
 
-    type_dir = registry.type_dir(args.type_id)
-    if not registry.type_exists(args.type_id):
-        raise SystemExit(f"报告类型不存在：{args.type_id}")
-    sources = registry.load_sources(args.type_id)
-    spec_file = args.spec or str(registry.spec_path(args.type_id))
-    spec = load_spec(spec_file)
+    tree_meta: dict | None = None
+    tree_fp: str | None = None
+    if args.tree:
+        # 树模式：结构从 config/trees/<id>/tree.yaml 加载（含 tree: 元信息块），
+        # sources 为合成 dict（无静态绑定，取数靠 planner 计划/--plan/资料夹）
+        from trees import store as tree_store
+        loaded = tree_store.load_tree(args.tree)    # 不存在/不合规在此报错
+        spec, tree_meta, tree_fp = loaded["spec"], loaded["meta"], loaded["fingerprint"]
+        sources = tree_store.synthetic_sources(tree_meta, spec)
+        spec_file = str(loaded["path"])
+        type_id = args.tree
+    else:
+        type_id = args.type_id
+        registry.type_dir(args.type_id)
+        if not registry.type_exists(args.type_id):
+            raise SystemExit(f"报告类型不存在：{args.type_id}")
+        sources = registry.load_sources(args.type_id)
+        spec_file = args.spec or str(registry.spec_path(args.type_id))
+        spec = load_spec(spec_file)
 
     # judge 对标范文解析链：模板级 → 报告类型级
     if not spec.judge_reference and sources.get("judge_reference"):
@@ -98,6 +117,8 @@ def main(argv: list[str] | None = None,
     run_params = {k: v for k, v in
                   {"stock": stock, "project": args.project,
                    "period": args.period}.items() if v is not None}
+    if args.tree and not run_params.get("project"):
+        run_params["project"] = tree_meta.get("subject") or args.tree
 
     subject = run_params.get("project") or run_params.get("stock") or args.type_id
     run_dir = settings.resolve(settings.artifacts_dir) / \
@@ -124,6 +145,19 @@ def main(argv: list[str] | None = None,
         emit("data", f"  [复用] 数据层结果取自 {args.reuse_data}"
              f"（事实 {len(doc['facts'])} 条，跳过规划与取数）",
              {"reuse": args.reuse_data})
+    elif args.tree and args.plan:
+        from datalayer.planner import plan_to_bindings
+        from trees import store as tree_store
+        plan = tree_store.load_plan(args.tree, args.plan)
+        save(run_dir / "plan.json", plan)
+        emit("data", f"  [计划] 沿用数据计划 {args.plan}"
+             f"（rag {len(plan.get('rag') or [])} / web {len(plan.get('web') or [])}"
+             f" / db {len(plan.get('db') or [])}）", {"plan_mode": "plan"})
+        doc, crosscheck = registry.run_data_layer(
+            type_id, run_params, bindings_override=plan_to_bindings(plan, sources),
+            sources_override=sources)
+        doc["meta"]["intent"] = plan.get("focus") or args.intent
+        doc["meta"]["plan_mode"] = plan.get("mode", "plan")
     elif args.intent or args.folder:
         from datalayer.planner import make_plan, plan_to_bindings
         emit("data", f"  意图规划：{args.intent or '（以资料文件夹为主题）'}"
@@ -141,12 +175,13 @@ def main(argv: list[str] | None = None,
         for w in plan.get("warnings") or []:
             print(f"  [规划告警] {w}")
         doc, crosscheck = registry.run_data_layer(
-            args.type_id, run_params,
-            bindings_override=plan_to_bindings(plan, sources))
+            type_id, run_params, bindings_override=plan_to_bindings(plan, sources),
+            sources_override=sources if args.tree else None)
         doc["meta"]["intent"] = plan.get("focus") or args.intent
         doc["meta"]["plan_mode"] = plan["mode"]
     else:
-        doc, crosscheck = registry.run_data_layer(args.type_id, run_params)
+        doc, crosscheck = registry.run_data_layer(
+            type_id, run_params, sources_override=sources if args.tree else None)
     save(run_dir / "facts.json", doc)
     if crosscheck:
         save(run_dir / "crosscheck_report.json", crosscheck)
@@ -175,11 +210,16 @@ def main(argv: list[str] | None = None,
     emit("outline", f"  标题: {spec_outline['title']}",
          {"title": spec_outline["title"]})
     save(run_dir / "meta.json", {
-        "type_id": args.type_id,
+        "type_id": type_id,
         "type_name": sources.get("name", args.type_id),
-        "template_fingerprint": registry.template_fingerprint(args.type_id),
+        "template_fingerprint": tree_fp if args.tree
+        else registry.template_fingerprint(args.type_id),
         "params": run_params,
-        "spec": "report.yaml" if not args.spec else str(args.spec),
+        "spec": spec_file if (args.spec or args.tree) else "report.yaml",
+        "tree_id": args.tree,
+        "tree_version": (tree_meta or {}).get("version"),
+        "tree_fingerprint": tree_fp,
+        "style_card": spec.style_card,
         "intent": doc["meta"].get("intent"),
         "plan_mode": (plan or {}).get("mode"),
         "reuse_data": args.reuse_data,

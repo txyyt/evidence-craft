@@ -4,12 +4,14 @@
 
   const NAV = [
     { key: '/overview', label: '首页', icon: 'home' },
+    { key: '/trees', label: '模板工作台', icon: 'edit' },
     { key: '/generate', label: '报告生成', icon: 'play' },
     { key: '/types', label: '报告类型管理', icon: 'layers' },
     { key: '/settings', label: '系统设置', icon: 'settings' },
   ];
   const META = {
     '/overview': { title: '首页', desc: '总览与快捷入口', icon: 'home' },
+    '/trees': { title: '模板工作台', desc: '对话生成与手动编辑报告结构树，确认数据计划后生成', icon: 'edit' },
     '/generate': { title: '报告生成', desc: '选择报告类型，生成报告并查看结果', icon: 'play' },
     '/types': { title: '报告类型管理', desc: '创建和维护报告类型：报告结构、数据来源、验证与版本', icon: 'layers' },
     '/settings': { title: '系统设置', desc: '大模型、流水线参数与全局数据连接', icon: 'settings' },

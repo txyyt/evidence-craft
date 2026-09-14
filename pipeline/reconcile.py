@@ -30,6 +30,9 @@ _CITE_RE = re.compile(
     r"|(?=[（(][^\s（）()]*\.)[（(][^\s（）()]{1,80}[）)]")
 # 标准编号（DZ/T 0467、JC/T 1048—2018 等）：编号里的数字不是量值
 _STDNO_RE = re.compile(r"[A-Z]{1,4}/T\s?\d{3,4}(?:[—-]\d{4})?")
+# 通识数字出口：写作层用全角中括号〔...〕标记非事实清单支撑的通识性数值
+# （如〔400～600℃〕，全篇限量由 validate 把关）——标记内数字不参与对账
+_GENKNOW_RE = re.compile(r"〔[^〕]{1,40}〕")
 # 模型偶发把公告号写成裸码（AN2026...，丢 ann. 前缀）——规范化而非丢弃
 _BARE_ANN_RE = re.compile(r"^(AN|AP)\d+$", re.IGNORECASE)
 
@@ -79,6 +82,7 @@ def _value_index(doc: dict[str, Any]) -> dict[str, float]:
 
 
 def _numbers_in(text: str) -> list[float]:
+    text = _GENKNOW_RE.sub("", text)    # 通识标记内数字不参与对账
     text = _CITE_RE.sub("", text)
     text = _STDNO_RE.sub("", text)
     out = []
@@ -137,6 +141,46 @@ def _table_numbers(doc: dict[str, Any], tid: str) -> set[str]:
     return out
 
 
+def _reference_numbers(spec: Any) -> set[float]:
+    """范文豁免集：对标范文（judge_reference 全文）与所有章节/槽位 fewshot
+    中的数值集合。
+
+    范文是用户提供的权威样本——写作提示词拿它教模型行文，模型复述范文中的
+    数值（如"400～600℃成岩温度"）不应被"数字必有出处"拦下（范文数字的
+    出处就是范文本身）。豁免集只参与对账放行，不进事实清单（不污染
+    cited_fact_ids/溯源附录/index_size）。"""
+    texts: list[str] = []
+    if spec is not None:
+        ref = getattr(spec, "judge_reference", None)
+        if ref:
+            try:
+                from datalayer.settings import settings
+                p = settings.resolve(str(ref))
+                if p.is_file():
+                    texts.append(p.read_text(encoding="utf-8"))
+            except OSError:
+                pass
+        for sec in getattr(spec, "sections", []) or []:
+            if getattr(sec, "fewshot", None):
+                texts.append(sec.fewshot)
+            for slot in getattr(sec, "view_slots", []) or []:
+                if getattr(slot, "fewshot", None):
+                    texts.append(slot.fewshot)
+    out: set[float] = set()
+    for t in texts:
+        for m in _NUM_RE.finditer(_CITE_RE.sub("", _STDNO_RE.sub("", t))):
+            raw = m.group(0).replace(",", "")
+            if not _YEAR_RE.match(raw):
+                out.add(float(raw))
+    return out
+
+
+def _match_ref(n: float, ref_vals: list[float]) -> bool:
+    """范文豁免匹配（与事实索引同容差，按绝对值比对）。"""
+    return any(abs(abs(v) - abs(n)) / max(abs(v), 1e-9) <= TOLERANCE
+               for v in ref_vals)
+
+
 def reconcile(doc: dict[str, Any], outline: dict[str, Any],
               sections: list[dict[str, Any]],
               forecast: dict[str, Any], risks: dict[str, Any],
@@ -156,7 +200,9 @@ def reconcile(doc: dict[str, Any], outline: dict[str, Any],
         if r:
             risk_id = r.id
     index = _value_index(doc)
+    ref_vals = sorted(_reference_numbers(spec), reverse=True)
     checks: list[dict[str, Any]] = []
+    n_ref_exempt = 0
 
     _KNOWN_PREFIXES = ("fin.", "quote.", "mainop.", "ann.", "newsind.",
                        "consensus.", "forecast.", "rag.", "web.")
@@ -178,7 +224,7 @@ def reconcile(doc: dict[str, Any], outline: dict[str, Any],
                 ignored.append(t)
         bad_ids = [c for c in norm if not _cited_ok(c, index)]
         ann_nums = _ann_numbers(doc, norm) | (extra_ok or set())
-        unknown, from_ann = [], 0
+        unknown, from_ann, ref_exempt = [], 0, 0
         for n in _numbers_in(body):
             if _match(n, index) is not None:
                 continue
@@ -187,7 +233,14 @@ def reconcile(doc: dict[str, Any], outline: dict[str, Any],
             if str(n) in ann_nums or str(int(n)) in ann_nums:
                 from_ann += 1
                 continue
+            # 范文豁免：数字出自己在对标范文/槽位 fewshot 中（同容差匹配），
+            # 属"复述范文"而非编造——放行并计数，不进 unknown
+            if _match_ref(n, ref_vals):
+                ref_exempt += 1
+                continue
             unknown.append(n)
+        nonlocal n_ref_exempt
+        n_ref_exempt += ref_exempt
         checks.append({
             "section": name,
             "cited_ids": norm,
@@ -195,6 +248,7 @@ def reconcile(doc: dict[str, Any], outline: dict[str, Any],
             "ignored_citations": ignored,      # 标题/散文式引用 → 格式噪音
             "numbers_in_text": len(_numbers_in(body)),
             "numbers_from_announcement": from_ann,
+            "numbers_ref_exempt": ref_exempt,  # 范文豁免命中（复述范文数字）
             "unknown_numbers": unknown,        # 对不上账的数字 → 人工复核
         })
 
@@ -229,5 +283,6 @@ def reconcile(doc: dict[str, Any], outline: dict[str, Any],
         "status": "fail" if hard else ("warn" if warn else "pass"),
         "tolerance_pct": TOLERANCE * 100,
         "index_size": len(index),
+        "n_ref_exempt": n_ref_exempt,   # 范文豁免命中总数（审计用）
         "checks": checks,
     }

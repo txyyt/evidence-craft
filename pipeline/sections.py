@@ -9,6 +9,8 @@
 - 风险提示节：按 spec 风险章节的 strategy/style 生成。
 """
 
+from datetime import datetime
+import re
 from typing import Any
 
 from pipeline.llm import chat_json, tier_for
@@ -18,12 +20,25 @@ from template_factory.schema import SpecV2
 SYSTEM = """你是{role}，撰写报告的一个段落。
 
 报告类型：{description}
-
+{timeliness}{style_block}
 写作规范：
 {rules}
 
 【范文】
 {fewshot}
+"""
+
+# 时效与通识标注全局规则（写作/修订调用都经 _system 注入；doc 不传时省略）
+_TIMELINESS_TMPL = """当前日期：{today}
+数据年代分布：{era_line}
+
+时效规则：引用目标年份已过的预测/规划时，必须写成历史口径（如"此前研究预测
+到2025年需求将达38.31万t（张海啟）"），禁止用"预计到/将于/将达"等将来时
+表述已过期年份的目标。
+
+通识数值标注：范文或行文必需、但上方事实切片中不存在的通识性数值（如教科书
+级温度区间、品位阈值），用全角中括号标注（例：〔400～600℃〕），全篇至多
+3 处；标注外的正文数字必须出自事实切片，否则会被对账拦截。
 """
 
 VIEW_TMPL = """本段视角：{slot_id}
@@ -145,9 +160,36 @@ def _citations_resolvable(doc: dict[str, Any], ids: list[Any]) -> list[str]:
     return out
 
 
-def _system(spec: SpecV2, fewshot: str) -> str:
+def _era_line(doc: dict[str, Any] | None) -> str:
+    """事实年代分布一行摘要（as_of 四位年份计数，供模型感知数据新旧）。"""
+    from collections import Counter
+    years: Counter = Counter()
+    for f in (doc or {}).get("facts") or []:
+        m = re.search(r"20\d{2}", str(f.get("as_of") or ""))
+        years[m.group(0) if m else "未注明"] += 1
+    if not years:
+        return "（无事实）"
+    return " / ".join(f"{k}年 {n} 条" if k != "未注明" else f"{k} {n} 条"
+                      for k, n in sorted(years.items()))
+
+
+def _system(spec: SpecV2, fewshot: str,
+            doc: dict[str, Any] | None = None) -> str:
+    """写作系统提示词拼装；doc 给出时注入时效与通识标注全局规则。
+    文风卡（spec.style_card）：rules 注入；节选在范文缺位时兜底（D3）。"""
+    from pipeline.stylecards import apply as style_apply
+    timeliness = ""
+    if doc is not None:
+        timeliness = _TIMELINESS_TMPL.format(
+            today=datetime.now().strftime("%Y-%m-%d"),
+            era_line=_era_line(doc))
+        timeliness += "\n"
+    style_block, fewshot = style_apply(spec, fewshot)
+    if style_block:
+        style_block = style_block + "\n"
     return SYSTEM.format(role=spec.writer_role, description=spec.description,
-                         rules=spec.rules_text(), fewshot=fewshot)
+                         rules=spec.rules_text(), fewshot=fewshot,
+                         timeliness=timeliness, style_block=style_block)
 
 
 def gen_risks(doc: dict[str, Any], spec: SpecV2,
@@ -164,7 +206,7 @@ def gen_risks(doc: dict[str, Any], spec: SpecV2,
     clues = "\n".join(f"- {a['date']} {a['title']}" for a in risk_anns[:5]) or "（无）"
     user = RISK_TMPL.format(views=views_text, structure=structure or "（无）",
                             risk_clues=clues, style=risk_sec.style or "")
-    out = chat_json(_system(spec, spec.fewshot_for(risk_sec)), user,
+    out = chat_json(_system(spec, spec.fewshot_for(risk_sec), doc), user,
                     schema_hint='只输出 JSON：body/cited_fact_ids。',
                     tier=tier_for("write"))
     out["body"] = _strip_cites(out.get("body", ""))
@@ -283,7 +325,7 @@ def gen_view(doc: dict[str, Any], view: dict[str, Any],
         style=views_sec.view_style or "",
         facts=facts_text, context="\n".join(context_lines) or "（无）",
     )
-    out = chat_json(_system(spec, spec.fewshot_for(views_sec, view["slot_id"])),
+    out = chat_json(_system(spec, spec.fewshot_for(views_sec, view["slot_id"]), doc),
                     user,
                     schema_hint='只输出 JSON 对象：heading/body/cited_fact_ids 三个字段。',
                     tier=tier_for("write"))
@@ -333,7 +375,26 @@ def _generic_rows_table(doc: dict[str, Any], tpl: Any) -> str:
     return "\n".join([head, sep, body])
 
 
-_RENDERERS = {"consensus_pe": forecast_table, "generic_rows": _generic_rows_table}
+def _facts_rows_table(doc: dict[str, Any], tpl: Any) -> str:
+    """facts_rows 渲染器（树场景）：source_prefix 命中的标量事实逐行成表
+    （指标/数值/截至），无绑定依赖；数字全部来自事实包，本渲染器不计算。"""
+    prefix = tpl.source_prefix or ""
+    items = [f for f in doc["facts"] if f["id"].startswith(prefix)]
+    if not items:
+        return "（表格数据缺失）"
+    columns = tpl.columns or ["指标", "数值", "截至"]
+    head = "| " + " | ".join(columns) + " |"
+    sep = "|" + "---|" * len(columns)
+    rows = []
+    for f in items:
+        val = f"{f['value']}{f.get('unit', '')}" if f.get("value") is not None else "—"
+        row = [f["name"], val, str(f.get("as_of") or "—")]
+        rows.append("| " + " | ".join(str(c) for c in row[:len(columns)]) + " |")
+    return "\n".join([head, sep, *rows])
+
+
+_RENDERERS = {"consensus_pe": forecast_table, "generic_rows": _generic_rows_table,
+              "facts_rows": _facts_rows_table}
 
 
 def gen_text_section(doc: dict[str, Any], sec: Any, plan: dict[str, Any],
@@ -351,7 +412,7 @@ def gen_text_section(doc: dict[str, Any], sec: Any, plan: dict[str, Any],
     user = TEXT_TMPL.format(
         title=sec.title, style=sec.style or "", guidance=plan.get("guidance", ""),
         facts=facts_text, context="\n".join(context_lines) or "（无）")
-    out = chat_json(_system(spec, spec.fewshot_for(sec)), user,
+    out = chat_json(_system(spec, spec.fewshot_for(sec), doc), user,
                     schema_hint="只输出 JSON 对象：body/cited_fact_ids 两个字段。",
                     tier=tier_for("write"))
     out["body"] = _strip_cites(out.get("body", ""))
@@ -388,7 +449,7 @@ def gen_forecast_note(doc: dict[str, Any], spec: SpecV2) -> dict[str, Any]:
     ids = [f["id"] for f in doc["facts"] if f["id"].startswith(f"fin.{latest.get('period', 'X')}.")]
     user = FORECAST_TMPL.format(table=render_table(doc, spec), latest_summary=summary,
                                 fact_ids=", ".join(ids[:8]), style=table_sec.style or "")
-    return chat_json(_system(spec, spec.fewshot_for(table_sec)),
+    return chat_json(_system(spec, spec.fewshot_for(table_sec), doc),
                      user, schema_hint="只输出 JSON：body/cited_fact_ids。",
                      tier=tier_for("write"))
 
@@ -412,7 +473,7 @@ def gen_table_note(doc: dict[str, Any], sec: Any, spec: SpecV2) -> dict[str, Any
     user = TABLE_NOTE_TMPL.format(table=render_table_sec(doc, sec, spec),
                                   fact_ids=", ".join(ids),
                                   style=sec.style or "")
-    out = chat_json(_system(spec, spec.fewshot_for(sec)), user,
+    out = chat_json(_system(spec, spec.fewshot_for(sec), doc), user,
                     schema_hint="只输出 JSON：body/cited_fact_ids。",
                     tier=tier_for("write"))
     out["body"] = _strip_cites(out.get("body", ""))

@@ -13,6 +13,37 @@ from template_factory.schema import SpecV2
 
 _now = datetime.now()
 
+# 通识数字出口：全角中括号标记（〔400～600℃〕），全篇限量
+_GENKNOW_RE = re.compile(r"〔[^〕]{1,40}〕")
+_GENKNOW_CAP = 3
+# 时效性：将来时措辞 + 四位年份（stale_forecast 规则）
+_FUTURE_RE = re.compile(
+    r"(预计到|预计于|将于|将达|将达到|有望于|预计(?:(?:到|于)?\s*20\d{2}\s*年?))"
+    r"[^\d。；;]{0,12}(20\d{2})\s*年?")
+# 历史引述前缀（句内出现即视为回顾旧预测，不判将来时失效）
+_HISTORY_RE = re.compile(r"此前|曾经?|据[^。；;]{0,10}(预测|研究|统计)|历史上|当年")
+
+
+def _stale_forecasts(text: str, current_year: int) -> list[str]:
+    """正文里"将来时 + 目标年份已过"的片段（历史引述除外）。
+
+    例："预计到2025年需求将达38.31万t"（今年 2026）→ 命中；
+    "此前研究预测到2025年将达38.31万t"→ 历史引述，不命中。"""
+    out: list[str] = []
+    for m in _FUTURE_RE.finditer(text):
+        target = int(m.group(2))
+        if target >= current_year:
+            continue
+        # 只回看所在句（上一个句号/分号之后），句内有历史引述词则豁免
+        start = max(text.rfind("。", 0, m.start()),
+                    text.rfind("；", 0, m.start()),
+                    text.rfind(";", 0, m.start())) + 1
+        sentence = text[start:m.end()]
+        if _HISTORY_RE.search(sentence):
+            continue
+        out.append(f"{m.group(0).strip()}（目标年份 {target} 已过）")
+    return out
+
 
 def _charlen(text: str) -> int:
     return len(re.sub(r"\s", "", text))
@@ -134,6 +165,32 @@ def run(doc: dict[str, Any], outline: dict[str, Any],
     # —— 术语：禁用词（spec.forbidden_words）——
     hits = [w for w in spec.forbidden_words if w in all_text]
     rule("style.forbidden", not hits, f"禁用词 {hits}", level="warn")
+
+    # —— 通识数字出口限量：全篇〔...〕标记至多 3 处（缺省启用，
+    #     spec.check_rules 写 "genknow_cap_off" 关闭）——
+    if "genknow_cap_off" not in spec.check_rules:
+        full_text = all_text + "".join(t.get("body", "") for t in texts or [])
+        marks = _GENKNOW_RE.findall(full_text)
+        rule("style.genknow_cap", len(marks) <= _GENKNOW_CAP,
+             f"通识数值标记 {len(marks)} 处（上限 {_GENKNOW_CAP}）："
+             + "、".join(m[:20] for m in marks[:_GENKNOW_CAP + 1]),
+             metric=len(marks))
+
+    # —— 时效性：将来时 + 过期年份（stale_forecast，spec.check_rules 开关，
+    #     缺省启用；写 "stale_forecast_off" 关闭）——
+    if "stale_forecast_off" not in spec.check_rules:
+        year = _now.year
+        bodies = [outline["title"], forecast["body"], risks["body"]] \
+            + [v.get("body", "") for v in views] \
+            + [t.get("body", "") for t in texts or []] \
+            + [n.get("body", "") for n in (notes or {}).values()
+               if isinstance(n, dict)]
+        stale_all: list[str] = []
+        for b in bodies:
+            stale_all.extend(_stale_forecasts(b, year))
+        rule("stale_forecast", not stale_all,
+             "把目标年份已过的预测写成将来时（应改为历史口径，如'此前研究预测到"
+             f"2025年…'）：{'；'.join(stale_all[:4])}", metric=len(stale_all))
 
     # —— 受控词表（spec.controlled_vocab）——
     rating_vocab = spec.controlled_vocab.get("rating")

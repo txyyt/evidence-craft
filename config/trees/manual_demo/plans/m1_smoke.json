@@ -1,0 +1,22 @@
+{
+  "mode": "plan",
+  "subject": "国内高纯石英",
+  "focus": "国内高纯石英市场供需与勘查动态",
+  "intent": "国内高纯石英市场供需与勘查动态",
+  "corpus": {
+    "fragments_rel": "data/corpus/_intent/2f7d0cab7100/fragments.json",
+    "n_fragments": 809,
+    "rebuilt": false,
+    "fingerprint": "2f7d0cab7100"
+  },
+  "rag": [
+    {
+      "need": "corpus_smoke",
+      "query": "高纯石英 市场 供需 勘查",
+      "top_k": 6
+    }
+  ],
+  "web": [],
+  "db": [],
+  "tables_kept": []
+}

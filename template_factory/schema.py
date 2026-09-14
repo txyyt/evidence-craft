@@ -79,6 +79,8 @@ class Section(BaseModel):
     kind: Kind
     style: str | None = None          # 本节写作要求（喂给对应阶段的 prompt）
     fewshot: str | None = None        # 章节级范文（槽位未配置时兜底）
+    data_needs: list[str] = Field(default_factory=list)   # 本节语义数据需求（树场景，M7 同名同义）
+    origin: str = "agent"             # 谁定的这节：user（用户点名）| agent（agent 补全）
     check: Check = Field(default_factory=Check)
     # 显示标题：heading 配置后渲染层原样输出（范文式编号"0　引言"），
     # 缺省按章节顺序自动编号（docx"一、二、"）；inline 章节不渲染章节标题
@@ -109,11 +111,15 @@ class Section(BaseModel):
 
 
 class TableTemplate(BaseModel):
-    """表格模板：代码渲染器按 renderer 分发，LLM 不产表格数字。"""
+    """表格模板：代码渲染器按 renderer 分发，LLM 不产表格数字。
+
+    facts_rows 渲染器（树场景）：source_prefix 给出事实 id 前缀，把命中的
+    标量事实逐行成表（指标名/值/截至），无需任何数据绑定。"""
 
     id: str
-    renderer: Literal["consensus_pe", "generic_rows"]
+    renderer: Literal["consensus_pe", "generic_rows", "facts_rows"]
     columns: list[str] = Field(default_factory=list)
+    source_prefix: str | None = None       # facts_rows：事实 id 前缀
 
 
 class SpecV2(BaseModel):
@@ -132,6 +138,9 @@ class SpecV2(BaseModel):
     judge_reference: str | None = None                     # 模板级对标范文，部门可覆盖
     disclaimer: str | None = None                          # 渲染层免责/说明段
     industry_keywords: list[str] = Field(default_factory=list)  # M7 迁部门 profile
+    # 树场景扩展字段（旧 report.yaml 不写即缺省，零影响）：
+    style_card: str | None = None    # 文风卡 id（config/style_cards/<id>.yaml）
+    genre: str | None = None         # 报告形态：journal | research | brief（树 agent 推断）
 
     @model_validator(mode="after")
     def _check_sections(self) -> "SpecV2":

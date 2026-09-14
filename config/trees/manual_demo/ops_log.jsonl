@@ -1,0 +1,2 @@
+{"ts": "2026-09-14T20:18:49", "actor": "system", "op": {"action": "create"}, "summary": "创建结构树", "version_after": 1, "fingerprint": "5d35143e073b"}
+{"ts": "2026-09-14T20:34:04", "actor": "manual", "op": {"action": "save"}, "summary": "编辑器保存", "version_after": 2, "fingerprint": "47adc723a44d"}

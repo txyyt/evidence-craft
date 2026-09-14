@@ -15,8 +15,8 @@ import json
 import threading
 from typing import Any
 
-from openai import (APITimeoutError, APIConnectionError, OpenAI,
-                    RateLimitError)
+from openai import (APIConnectionError, APIStatusError, APITimeoutError,
+                    OpenAI, RateLimitError)
 
 from datalayer.settings import settings
 
@@ -24,7 +24,12 @@ _clients: dict[str, OpenAI] = {}
 _tier_override: str | None = None          # --model-tier 全局覆盖（单机单跑场景）
 _stats: dict[str, Any] = {"calls": 0, "seconds": 0.0, "tiers": {}}
 _stats_lock = threading.Lock()
-# 偶发超时/限流按可重试处理（单次上限由 client() 的 timeout=180s 控制）
+# 偶发超时/限流按可重试处理（单次上限由 client() 的 timeout=180s 控制）；
+# 5xx 服务端过载（如硅基流动 503 "System is too busy"）同样指数退避重试
+def _is_5xx(e: Exception) -> bool:
+    return isinstance(e, APIStatusError) and getattr(e, "status_code", 0) >= 500
+
+
 _RETRYABLE = (APITimeoutError, RateLimitError, APIConnectionError)
 
 _TIER_FIELDS = ("base_url", "api_key", "model", "reasoning_effort")
@@ -123,6 +128,11 @@ def chat_json(system: str, user: str, schema_hint: str,
             if attempt >= 2:
                 raise
             time.sleep(2 ** attempt)
+            continue
+        except Exception as e:
+            if not _is_5xx(e) or attempt >= 2:
+                raise     # 5xx 服务端过载：退避重试两次，仍失败原样抛出
+            time.sleep(2 ** attempt * 2)
             continue
         with _stats_lock:
             _stats["calls"] += 1

@@ -277,13 +277,17 @@ def _resolve_all(binding_list: list[dict], run_params: dict, vocabulary: dict,
 
 def run_data_layer(type_id: str, run_params: dict[str, Any],
                    extra_bindings: list[dict] | None = None,
-                   bindings_override: list[dict] | None = None) -> tuple[dict, Any]:
+                   bindings_override: list[dict] | None = None,
+                   sources_override: dict | None = None) -> tuple[dict, Any]:
     """按报告类型绑定取数 → (facts_doc, crosscheck|None)。单源失败不阻塞。
 
     extra_bindings：追加在模板静态绑定之后（同 schema：need/adapter/params）。
     bindings_override：整体替换静态绑定——意图规划器（datalayer/planner）
-    用采集计划接管本次 rag/web 查询并筛选沿用表格时使用。"""
-    src = load_sources(type_id)
+    用采集计划接管本次 rag/web 查询并筛选沿用表格时使用。
+    sources_override：合成 sources dict（结构树模式：无报告类型目录、
+    无静态绑定、crosschecks 不启用）。"""
+    src = sources_override if sources_override is not None \
+        else load_sources(type_id)
     if bindings_override is not None:
         bindings = list(bindings_override)
     else:

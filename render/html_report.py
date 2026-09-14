@@ -7,12 +7,27 @@ text → 标题 + 综述正文；figures → 标题 + 图件集（图N + 图注�
 """
 
 import html
+import re
 from datetime import datetime
 from typing import Any
 
 from pipeline.sections import render_table_sec
 from render.common import md_table_rows
 from template_factory.schema import SpecV2
+
+# 通识数值标记〔x〕→ x（终稿干净；限量由 validate 把关）
+_GENKNOW_RE = re.compile(r"〔([^〕]{1,40})〕")
+
+
+def _clean_genknow(text: str) -> str:
+    return _GENKNOW_RE.sub(r"\1", text)
+
+
+def _data_cutoff(doc: dict[str, Any]) -> str:
+    """事实 as_of 中可解析的最大四位年份（失败回退"未注明"）。"""
+    years = [int(m.group(0)) for f in doc.get("facts") or []
+             for m in [re.search(r"20\d{2}", str(f.get("as_of") or ""))] if m]
+    return f"{max(years)}年" if years else "未注明"
 
 TPL = """<!DOCTYPE html>
 <html lang="zh-CN">
@@ -212,6 +227,7 @@ def render(doc: dict[str, Any], outline: dict[str, Any],
         _section_html(sec, doc, sections, forecast, risks, spec,
                       texts_by_id, notes, charts, facts_by_id)
         for sec in spec.sections)))
+    body = _clean_genknow(body)     # 〔x〕→ x（通识标记限量由 validate 把关）
     appendix = "\n".join(
         APPENDIX_ROW.format(id=_esc(f["id"]), name=_esc(f["name"]), value=f["value"],
                             unit=_esc(f["unit"]), source=_esc(f["source"]),
@@ -221,7 +237,8 @@ def render(doc: dict[str, Any], outline: dict[str, Any],
         title=_esc(outline["title"]),
         rating=_esc(rating),
         code=_esc(meta.get("stock", "")), name=_esc(meta.get("name", "")),
-        industry=_esc(meta.get("industry", "")),
+        industry=_esc(meta.get("industry", ""))
+        + f" ｜ 数据截至 {_data_cutoff(doc)}（语料文献口径）",
         date=datetime.now().strftime("%Y-%m-%d"),
         kline_img=kline_img,
         body=body,

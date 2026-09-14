@@ -145,6 +145,31 @@ def start_job(fn, label: str, loop: asyncio.AbstractEventLoop) -> RunTask:
     return task
 
 
+def sse_response(t: "RunTask"):
+    """任务事件 SSE 响应（历史事件先回放，end 后关闭；运行/通用任务共用）。"""
+    import json
+    from fastapi.responses import StreamingResponse
+    q = t.subscribe()
+
+    async def gen():
+        try:
+            while True:
+                try:
+                    ev = await asyncio.wait_for(q.get(), timeout=600)
+                except asyncio.TimeoutError:
+                    yield ": keepalive\n\n"   # 空心跳，维持连接
+                    continue
+                yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
+                if ev.get("type") == "end":
+                    break
+        finally:
+            t.unsubscribe(q)
+
+    return StreamingResponse(gen(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache",
+                                      "X-Accel-Buffering": "no"})
+
+
 def summarize(run_dir: Path) -> dict[str, Any]:
     """产物目录 → 历史列表条目（judge 分/verdict/标题/文件存在性）。"""
     import json

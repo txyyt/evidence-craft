@@ -134,6 +134,10 @@ _PLAN_USER_TMPL = """【写作意图】
 【报告结构】（各章节需要数据支撑）
 {structure}
 
+【数据需求清单】（树上各节声明的语义需求；逐条判定 covered/search/gap：
+covered=已有语料检索可支撑，search=需联网搜索，gap=计划无来源）
+{needs}
+
 【可用数据库】（仅当库中表与意图相关时规划 db 查询；value_columns 的 key 用英文）
 {databases}
 
@@ -153,9 +157,10 @@ _PLAN_USER_TMPL = """【写作意图】
         "value_columns": [{{"column": "数值列", "key": "英文键", "unit": "单位"}}],
         "as_of_column": "日期列（可选）", "table_columns": ["展示列..."],
         "table_id": "表格id（可选，配 table_columns 时生成整表）"}}],
-"tables_kept": ["需沿用的表格/数据库绑定 need 名"]}}
+"tables_kept": ["需沿用的表格/数据库绑定 need 名"],
+"needs_coverage": [{{"need": "需求清单原句", "status": "covered|search|gap"}}]}}
 rag 不超过 {max_rag} 条、web 不超过 {max_web} 条、db 不超过 {max_db} 条。
-【可用数据库】为空时 db 输出空数组。"""
+【可用数据库】为空时 db 输出空数组。needs_coverage 必须覆盖需求清单的每一句。"""
 
 
 def _chart_table_ids(spec: Any) -> set[str]:
@@ -171,7 +176,8 @@ def _chart_table_ids(spec: Any) -> set[str]:
 
 def _clamp_plan(out: dict[str, Any], other: list[dict],
                 keep_ids: set[str] | None = None,
-                db_schemas: dict[str, str] | None = None
+                db_schemas: dict[str, str] | None = None,
+                needs: list[str] | None = None
                 ) -> tuple[dict[str, Any], list[str]]:
     """LLM 计划清洗：条数/类型/取值范围收敛，非法项丢弃；
     keep_ids 中的表格绑定强制沿用（图表数据源，不受意图取舍影响）；
@@ -255,7 +261,26 @@ def _clamp_plan(out: dict[str, Any], other: list[dict],
         kept = [b.get("need") for b in other]
     return {"subject": _s(out.get("subject"), 40) or "报告主题",
             "focus": _s(out.get("focus"), 200),
-            "rag": rag, "web": web, "db": dbs, "tables_kept": kept}, warnings
+            "rag": rag, "web": web, "db": dbs, "tables_kept": kept,
+            "needs_coverage": _clamp_coverage(out.get("needs_coverage"), needs)}, \
+        warnings
+
+
+def _clamp_coverage(raw: Any, needs: list[str] | None) -> list[dict[str, str]]:
+    """needs_coverage 清洗：status 白名单；needs 给出时保证逐条覆盖（缺失→gap）。"""
+    if not needs:
+        return []
+    by_need = {}
+    for it in raw or []:
+        if isinstance(it, dict) and it.get("need"):
+            status = it.get("status")
+            by_need[str(it["need"])[:80]] = status if status in (
+                "covered", "search", "gap") else "gap"
+    out = []
+    for n in needs:
+        status = by_need.get(n) or by_need.get(n[:80])
+        out.append({"need": n, "status": status or "gap"})
+    return out
 
 
 def _fallback_plan(intent: str, rag_static: list[dict], web_static: list[dict],
@@ -280,11 +305,14 @@ def _fallback_plan(intent: str, rag_static: list[dict], web_static: list[dict],
 
 
 def make_plan(spec: Any, sources: dict[str, Any], intent: str,
-              folder: str | None = None) -> dict[str, Any]:
-    """意图 + 结构模板 + 静态绑定 → 采集计划（LLM 主路径，规则兜底）。"""
+              folder: str | None = None,
+              needs: list[str] | None = None) -> dict[str, Any]:
+    """意图 + 结构模板 + 静态绑定 + 数据需求清单 → 采集计划。
+    needs（树场景）：各节 data_needs 汇总；给出时计划附 needs_coverage 三态回执。"""
     intent = (intent or "").strip()
-    if not intent and not folder:
-        raise ValueError("意图（--intent）与资料文件夹（--folder）至少给一个")
+    if not intent and not folder and not needs:
+        raise ValueError("意图（--intent）与资料文件夹（--folder）与数据需求"
+                         "（needs）至少给一个")
     rag_static, web_static, other = _static_bindings(sources)
     chart_kept = _chart_table_ids(spec)
 
@@ -315,14 +343,17 @@ def make_plan(spec: Any, sources: dict[str, Any], intent: str,
             _PLAN_SYSTEM,
             _PLAN_USER_TMPL.format(
                 intent=intent or "（无文字意图，以资料文件夹为主题生成综述报告）",
-                structure=_structure_lines(spec), static=static_lines.strip(),
+                structure=_structure_lines(spec),
+                needs="\n".join(f"- {n}" for n in (needs or [])) or "（无）",
+                static=static_lines.strip(),
                 databases=db_lines.strip() or "（无已配置数据库）",
                 run_params=run_params.strip() or "（无）",
                 max_rag=MAX_RAG, max_web=MAX_WEB, max_db=MAX_DB),
             schema_hint="只输出一个合法 JSON 对象："
-                        "subject/focus/rag/web/db/tables_kept。",
+                        "subject/focus/rag/web/db/tables_kept/needs_coverage。",
             tier=tier_for("extract"))
-        cleaned, warnings = _clamp_plan(out, other, chart_kept, schemas)
+        cleaned, warnings = _clamp_plan(out, other, chart_kept, schemas,
+                                        needs=needs)
         if not cleaned["rag"] and not cleaned["web"] and not cleaned["db"]:
             raise ValueError("规划器未产出任何查询")
         plan.update(cleaned)
@@ -331,6 +362,8 @@ def make_plan(spec: Any, sources: dict[str, Any], intent: str,
     except Exception as e:  # noqa: BLE001 —— 规划失败兜底，不阻塞报告生成
         plan.update(_fallback_plan(intent, rag_static, web_static, other,
                                    f"{type(e).__name__}: {e}"))
+        if needs:                       # 兜底：全部标 gap 交用户裁决
+            plan["needs_coverage"] = [{"need": n, "status": "gap"} for n in needs]
     # 换库：意图文件夹建了新语料库 → 全部 rag 查询指向新库（不与模板库混用）
     if corpus_info:
         plan["corpus_switched"] = True

@@ -102,8 +102,10 @@ def render_docx(doc: dict[str, Any], outline: dict[str, Any],
     p = d.add_paragraph()
     _run(p, outline["title"], size=16, bold=True, center=True)
     p = d.add_paragraph()
+    from render.html_report import _clean_genknow, _data_cutoff
     _run(p, " ".join(x for x in (meta.get("stock", ""), meta.get("name", ""),
                                   meta.get("industry", "")) if x)
+         + f"　｜　数据截至 {_data_cutoff(doc)}（语料文献口径）"
          + f"　｜　报告日期 {datetime.now():%Y-%m-%d}"
          + (f"　｜　评级 {rating}" if rating else ""),
         size=9, color="888888", center=True)
@@ -159,7 +161,7 @@ def render_docx(doc: dict[str, Any], outline: dict[str, Any],
                 p.paragraph_format.space_before = Pt(8)
                 p.paragraph_format.keep_with_next = True  # 小标题与正文同页
                 p = d.add_paragraph()
-                _run(p, s["body"])
+                _run(p, _clean_genknow(s["body"]))
         elif sec.kind == "table":
             rows, _note = md_table_rows(render_table_sec(doc, sec, spec))
             if rows:
@@ -171,15 +173,15 @@ def render_docx(doc: dict[str, Any], outline: dict[str, Any],
             note_body = notes.get(sec.id, forecast.get("body", ""))
             if note_body:
                 d.add_paragraph()
-                _run(d.add_paragraph(), note_body)
+                _run(d.add_paragraph(), _clean_genknow(note_body))
         elif sec.kind == "risk":
-            _run(d.add_paragraph(), risks.get("body", ""))
+            _run(d.add_paragraph(), _clean_genknow(risks.get("body", "")))
         elif sec.kind == "text":
             t = texts_by_id.get(sec.id)
             if t:
                 for para in t["body"].split("\n"):
                     if para.strip():
-                        _run(d.add_paragraph(), para.strip())
+                        _run(d.add_paragraph(), _clean_genknow(para.strip()))
         # 图件：figures 章节为图件集，text/views/risk 章节正文后内嵌
         # （范文形态：图随文走），图号全文连续
         _add_charts(charts.get(sec.id))

@@ -15,12 +15,12 @@ from datalayer.settings import settings
 from pipeline.llm import chat_json, tier_for
 from template_factory.schema import SpecV2
 
-SYSTEM = """你是报告质量评审官。以同类型标杆报告为对标，对自动生成的报告
+SYSTEM = """你是报告质量评审官。{framing}，
 严格评分。评分要给证据（引用原文短语），问题要定位到具体节。
 
 评分维度（1~10）：
-- structure 结构完整：各章节是否齐备且形态正确（对标标杆报告的章节形态）
-- professionalism 专业性：论证方式、术语使用是否接近范文（对比/归因/口径）
+- structure 结构完整：各章节是否齐备且形态正确{structure_hint}
+- professionalism 专业性：论证方式、术语使用{prof_hint}
 - data_support 数据支撑：数据密度与精度，引用是否恰当（结合系统对账结果）
 - compliance 合规性：无第一人称、无夸大、合规段落到位、表达克制
 - readability 可读性：语句通顺、逻辑连贯、无模板腔
@@ -49,12 +49,20 @@ def run(doc: dict[str, Any], outline: dict[str, Any],
     table_secs = spec.sections_of("table")
     risk_sec = spec.section("risk")
     if not spec.judge_reference:
-        raise ValueError("spec 缺少 judge_reference")
+        # 树模式：无范文对照——评审基准改为各节 brief 覆盖度 + 行文规则 + 数据引用
+        reference = None
+        framing = "对自动生成的报告（无标杆范文，以各节写作要求与行文规则为评审基准）"
+        structure_hint = "（对照各节写作要求所期的章节形态）"
+        prof_hint = "是否符合专业报告的通行规范（对比/归因/口径）"
+    else:
+        reference = settings.resolve(spec.judge_reference).read_text(encoding="utf-8")
+        framing = "以同类型标杆报告为对标，对自动生成的报告"
+        structure_hint = "（对标标杆报告的章节形态）"
+        prof_hint = "是否接近范文（对比/归因/口径）"
     blo, bhi = (80, 230)
     if views_sec is not None:
         _chk = views_sec.check
         blo, bhi = tuple(_chk.body_len) if _chk.body_len else (80, 230)
-    reference = settings.resolve(spec.judge_reference).read_text(encoding="utf-8")
     unknown_n = sum(len(c["unknown_numbers"]) for c in reconcile_report["checks"])
     validate_items = "；".join(
         f"{i['rule']}({i['status']}): {i['detail']}" for i in validate_report["items"]) \
@@ -77,13 +85,18 @@ def run(doc: dict[str, Any], outline: dict[str, Any],
                         f"（禁止用序号代替），或 {'、'.join(targets)}。")
     else:
         targets_line = f"修订 target 取值只能是：{'、'.join(targets)}。"
-    system = SYSTEM.format(targets_line=targets_line)
+    system = SYSTEM.format(targets_line=targets_line, framing=framing,
+                           structure_hint=structure_hint, prof_hint=prof_hint)
 
-    blocks = [
-        "【对标范文】（标杆报告节选）",
-        reference,
-        f"【待评报告】\n标题：{outline['title']}",
-    ]
+    blocks = []
+    if reference is not None:
+        blocks += ["【对标范文】（标杆报告节选）", reference]
+    else:
+        rules_text = spec.rules_text()
+        blocks.append("【评审基准】（无范文模式）评分依据：各节写作要求的覆盖度、"
+                      "下列行文规则的遵守情况、数据引用规范（正文数字须可对账）。\n"
+                      + (f"行文规则：\n{rules_text}" if rules_text else "（无行文规则）"))
+    blocks.append(f"【待评报告】\n标题：{outline['title']}")
     if views_sec is not None:
         views_text = "\n".join(
             f"{i}. {v['heading']}\n   {v['body']}" for i, v in enumerate(views, 1))
@@ -124,8 +137,10 @@ def run(doc: dict[str, Any], outline: dict[str, Any],
         spec_reqs.append(req)
     for sid, sec in text_secs.items():
         tlo, thi = tuple(sec.check.body_len) if sec.check.body_len else (150, 1600)
-        spec_reqs.append(f"{sec.title}：正文 {tlo}~{thi} 字，"
-                         "数字必须能对账到事实切片")
+        req = f"{sec.title}：正文 {tlo}~{thi} 字，数字必须能对账到事实切片"
+        if reference is None and sec.style:
+            req += f"；写作要求：{sec.style[:100]}".replace("\n", " ")
+        spec_reqs.append(req)
     if spec_reqs:
         blocks.append("【模板格式要求】（本报告类型的模板约定，评审以此为准，"
                       "勿套用其他文体惯例）：\n" + "\n".join(f"- {r}" for r in spec_reqs))

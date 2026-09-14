@@ -25,6 +25,17 @@ class RunIn(BaseModel):
     model_tier: str | None = None  # F3 档位覆盖（settings.model_tiers 档名）
 
 
+class TreeRunIn(BaseModel):
+    """树模式生成：结构从 config/trees/<id>/tree.yaml 加载（树对话工作台入口）。"""
+    tree_id: str
+    project: str | None = None
+    period: str | None = None
+    intent: str | None = None      # 写作意图（与树 data_needs 一起进规划器）
+    folder: str | None = None      # 本地资料文件夹（现场建语料库）
+    plan: str | None = None        # 沿用树目录 plans/ 下的采集计划
+    model_tier: str | None = None
+
+
 class PreviewIn(BaseModel):
     type_id: str
     params: dict[str, str] = {}
@@ -61,6 +72,24 @@ async def start(body: RunIn) -> dict:
     if body.model_tier:
         argv += ["--model-tier", body.model_tier]
     task = bus.start_run(argv, body.type_id, asyncio.get_running_loop())
+    return {"id": task.id, "events_url": f"/api/runs/{task.id}/events"}
+
+
+@router.post("/from_tree")
+async def from_tree(body: TreeRunIn) -> dict:
+    from trees import store as tree_store
+    if not tree_store.exists(body.tree_id):
+        raise HTTPException(404, f"结构树不存在：{body.tree_id}")
+    argv = ["--tree", body.tree_id, "--full"]
+    for flag, v in (("--project", body.project), ("--period", body.period),
+                    ("--intent", body.intent), ("--folder", body.folder),
+                    ("--plan", body.plan)):
+        if v:
+            argv += [flag, v]
+    if body.model_tier:
+        argv += ["--model-tier", body.model_tier]
+    # 须为 async def：start_run 需要 running loop（同步 def 跑在线程池里没有）
+    task = bus.start_run(argv, body.tree_id, asyncio.get_running_loop())
     return {"id": task.id, "events_url": f"/api/runs/{task.id}/events"}
 
 
@@ -140,6 +169,93 @@ def cancel(run_id: str) -> dict:
     return {"ok": True}
 
 
+# ---------- 反馈回路（M3）：总意见 → 路由 → 三类执行 → 轮次/回滚/深度评审 ----------
+
+class FeedbackParseIn(BaseModel):
+    text: str
+
+
+class FeedbackApplyIn(BaseModel):
+    text: str
+    ops: list[dict]
+
+
+class FeedbackRollbackIn(BaseModel):
+    round: int
+
+
+def _run_dir(dir_name: str) -> Path:
+    d = _safe_dir(dir_name)
+    if not (d / "sections.json").exists():
+        raise HTTPException(404, "该目录没有报告稿件（反馈回路仅支持树模式生成的运行）")
+    return d
+
+
+@router.post("/{dir_name}/feedback/parse")
+def feedback_parse(dir_name: str, body: FeedbackParseIn) -> dict:
+    from pipeline import feedback
+    return feedback.parse(_run_dir(dir_name), body.text)
+
+
+@router.post("/{dir_name}/feedback/apply")
+async def feedback_apply(dir_name: str, body: FeedbackApplyIn) -> dict:
+    run_dir = _run_dir(dir_name)
+
+    def fn(progress) -> dict:
+        from pipeline import feedback
+        return feedback.apply(run_dir, body.ops, body.text, progress=progress)
+
+    task = bus.start_job(fn, f"feedback-{dir_name}", asyncio.get_running_loop())
+    return {"id": task.id, "events_url": f"/api/runs/feedback/{task.id}/events"}
+
+
+@router.get("/feedback/{job_id}/events")
+async def feedback_events(job_id: str):
+    t = bus.HUB.get(job_id)
+    if not t:
+        raise HTTPException(404, "服务已重启，该任务状态不可查")
+    return bus.sse_response(t)
+
+
+@router.get("/{dir_name}/feedback/rounds")
+def feedback_rounds(dir_name: str) -> list[dict]:
+    from pipeline import feedback
+    return feedback.rounds(_run_dir(dir_name))
+
+
+@router.get("/{dir_name}/feedback/diff")
+def feedback_diff(dir_name: str, round: int) -> dict:
+    import json as _json
+    p = _run_dir(dir_name) / "rounds" / str(round) / "diff.json"
+    if not p.exists():
+        raise HTTPException(404, f"第 {round} 轮没有 diff")
+    return _json.loads(p.read_text(encoding="utf-8"))
+
+
+@router.post("/{dir_name}/feedback/rollback")
+async def feedback_rollback(dir_name: str, body: FeedbackRollbackIn) -> dict:
+    run_dir = _run_dir(dir_name)
+
+    def fn(progress) -> dict:
+        from pipeline import feedback
+        return feedback.rollback(run_dir, body.round, progress=progress)
+
+    task = bus.start_job(fn, f"rollback-{dir_name}", asyncio.get_running_loop())
+    return {"id": task.id, "events_url": f"/api/runs/feedback/{task.id}/events"}
+
+
+@router.post("/{dir_name}/judge")
+async def judge_deep_endpoint(dir_name: str) -> dict:
+    run_dir = _run_dir(dir_name)
+
+    def fn(progress) -> dict:
+        from pipeline import feedback
+        return feedback.judge_deep(run_dir, progress=progress)
+
+    task = bus.start_job(fn, f"judge-{dir_name}", asyncio.get_running_loop())
+    return {"id": task.id, "events_url": f"/api/runs/feedback/{task.id}/events"}
+
+
 @router.get("")
 def history(type_id: str | None = None) -> list[dict]:
     root = _artifacts_root()
@@ -209,22 +325,4 @@ async def events(run_id: str) -> StreamingResponse:
     t = bus.HUB.get(run_id)
     if not t:
         raise HTTPException(404, "服务已重启，该次运行状态不可查（历史产物不受影响）")
-    q = t.subscribe()
-
-    async def gen():
-        try:
-            while True:
-                try:
-                    ev = await asyncio.wait_for(q.get(), timeout=600)
-                except asyncio.TimeoutError:
-                    yield ": keepalive\n\n"   # 空心跳，维持连接
-                    continue
-                yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
-                if ev.get("type") == "end":
-                    break
-        finally:
-            t.unsubscribe(q)
-
-    return StreamingResponse(gen(), media_type="text/event-stream",
-                             headers={"Cache-Control": "no-cache",
-                                      "X-Accel-Buffering": "no"})
+    return bus.sse_response(t)
