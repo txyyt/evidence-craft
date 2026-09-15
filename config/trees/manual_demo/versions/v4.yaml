@@ -1,0 +1,63 @@
+tree:
+  id: manual_demo
+  name: 手工演示简报
+  subject: 国内高纯石英
+  status: draft
+  version: 4
+  created_at: '2026-09-14T20:18:49'
+  provenance:
+    kind: manual
+  updated_at: '2026-09-15T00:46:43'
+report_type: manual_demo
+version: 2
+description: 国内高纯石英市场与勘查动态简报（M1 手工建树验收）
+writer_role: 资深行业研究员
+title_style: 短语式标题，15~30 字，概括报告主题与视角
+title_check: {}
+sections:
+- id: 综述
+  title: 综述概览
+  kind: text
+  style: 围绕报告主题写一段综述（2~3 个自然段）。
+  data_needs:
+  - 综述相关数据
+  origin: agent
+  check:
+    body_len:
+    - 150
+    - 800
+  heading: 综述概览
+  inline: false
+  view_slots: []
+  charts:
+  - id: chart_market
+    title: 关键数值分布
+    type: bar
+    source: facts:rag
+    y: []
+    unit: 万t
+    note: ''
+    bins: 10
+- id: 关键数据一览
+  title: 关键数据一览
+  kind: table
+  style: 用两三句话解读下表数据（数字以表格为准）。
+  data_needs:
+  - 关键数据一览相关数据
+  origin: user
+  check: {}
+  heading: 关键数据一览
+  inline: false
+  view_slots: []
+  table: facts_key
+  charts: []
+tables:
+- id: facts_key
+  renderer: facts_rows
+  columns: []
+  source_prefix: rag
+writing_rules: []
+forbidden_words: []
+controlled_vocab: {}
+check_rules: []
+industry_keywords: []

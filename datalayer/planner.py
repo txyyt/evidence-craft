@@ -58,11 +58,12 @@ def _db_schemas() -> dict[str, str]:
     return out
 
 
-def ensure_corpus(folder: str) -> dict[str, Any]:
+def ensure_corpus(folder: str) -> dict[str, Any] | None:
     """把用户资料文件夹现场建为检索片段库（内容指纹缓存）。
 
     指纹 = 目录内 PDF 的（相对路径+大小+mtime）摘要；一致即复用已建库。
-    返回 {dir, fragments_rel, n_fragments, n_files, fingerprint, rebuilt}。
+    返回 {dir, fragments_rel, n_fragments, n_files, fingerprint, rebuilt}；
+    文件夹没有 PDF 时返回 None（F11：文件夹可能只带 Excel——不作为错误）。
     """
     src = Path(folder)
     if not src.is_dir():
@@ -71,7 +72,7 @@ def ensure_corpus(folder: str) -> dict[str, Any]:
         (str(p.relative_to(src)), p.stat().st_size, int(p.stat().st_mtime))
         for p in src.rglob("*.pdf") if p.stat().st_size > 0)
     if not entries:
-        raise ValueError(f"资料文件夹中没有 PDF：{folder}")
+        return None
     fp = hashlib.sha256(
         json.dumps(entries, ensure_ascii=False).encode("utf-8")).hexdigest()[:12]
     cache_dir = settings.resolve(f"data/corpus/_intent/{fp}")
@@ -90,6 +91,90 @@ def ensure_corpus(folder: str) -> dict[str, Any]:
             "n_fragments": index.get("n_fragments", 0),
             "n_files": index.get("n_files_ok", 0),
             "fingerprint": fp, "rebuilt": True}
+
+
+# ---------- F11：用户资料文件夹的 Excel → 确定性 xlsx_table 绑定 ----------
+
+def _num_ok(v: Any) -> bool:
+    try:
+        float(str(v).replace(",", ""))
+        return True
+    except (TypeError, ValueError):
+        return False
+
+
+def _unit_of(col_name: str) -> str:
+    """unit 取列名中的括号内容（如「品位(%)」→ %），无括号为空。"""
+    m = re.search(r"[（(]([^）)]{1,10})[）)]\s*$", col_name or "")
+    return m.group(1) if m else ""
+
+
+def xlsx_bindings(folder: str) -> tuple[list[dict[str, Any]],
+                                        list[dict[str, Any]]]:
+    """资料文件夹中每个 xlsx → 一条确定性 xlsx_table 绑定（F11）。
+    规则：id/table_id=文件名词干、sheet=首个、id_column=首个非空列、
+    value_columns 采样前 50 行识别数值列（unit 取列名括号）、
+    table_columns 取全部列。
+    返回 (bindings, metas)：bindings 直入 plan["file_bindings"]；
+    metas=[{need, file, table_id, headers}] 供规划器提示词与回执覆盖判定。"""
+    import openpyxl
+    src = Path(folder)
+    if not src.is_dir():
+        raise ValueError(f"资料文件夹不存在或不是目录：{folder}")
+    bindings: list[dict[str, Any]] = []
+    metas: list[dict[str, Any]] = []
+    for p in sorted(src.rglob("*.xlsx")):
+        if p.name.startswith("~$"):
+            continue
+        try:
+            wb = openpyxl.load_workbook(p, data_only=True, read_only=True)
+            ws = wb[wb.sheetnames[0]]
+            rows = list(ws.iter_rows(min_row=1, max_row=51, values_only=True))
+            wb.close()
+        except Exception as e:  # noqa: BLE001 —— 单个文件损坏不阻塞
+            metas.append({"need": f"xlsx_{p.stem}"[:40], "file": p.name,
+                          "table_id": "", "headers": [],
+                          "error": f"读取失败：{e}"})
+            continue
+        if not rows:
+            continue
+        header = [str(c).strip() if c is not None else "" for c in rows[0]]
+        if not any(header):
+            continue
+        id_idx = next((i for i, h in enumerate(header) if h), 0)
+        id_column = header[id_idx] or f"列{id_idx + 1}"
+        sample = [r for r in rows[1:51]
+                  if any(c is not None and str(c).strip() != "" for c in r)]
+
+        def numeric(col_i: int) -> bool:
+            vals = [r[col_i] for r in sample
+                    if col_i < len(r) and r[col_i] not in (None, "", "-")]
+            if not vals:
+                return False
+            return sum(1 for v in vals if _num_ok(v)) / len(vals) >= 0.6
+
+        value_columns = []
+        for i, h in enumerate(header):
+            if not h or i == id_idx or not numeric(i):
+                continue
+            key = re.sub(r"[^\w]+", "_", h)[:30].strip("_") or f"c{i}"
+            value_columns.append({"column": h, "key": key,
+                                  "unit": _unit_of(h)})
+        stem = re.sub(r"[^\w\u4e00-\u9fff-]+", "_", p.stem)[:40].strip("_") \
+            or f"xlsx_{len(bindings) + 1}"
+        need = f"xlsx_{stem}"
+        bindings.append({
+            "need": need, "adapter": "xlsx_table",
+            "params": {"path": str(p), "header_row": 1,
+                       "id_prefix": stem, "id_column": id_column,
+                       "name_template": "{" + id_column + "}",
+                       "value_columns": value_columns,
+                       "table_columns": [h for h in header if h],
+                       "table_id": stem}})
+        metas.append({"need": need, "file": p.name, "table_id": stem,
+                      "headers": [h for h in header if h],
+                      "n_value_columns": len(value_columns)})
+    return bindings, metas
 
 
 def _structure_lines(spec: Any) -> str:
@@ -317,13 +402,19 @@ def make_plan(spec: Any, sources: dict[str, Any], intent: str,
     chart_kept = _chart_table_ids(spec)
 
     corpus_info = None
+    file_bindings: list[dict[str, Any]] = []
+    file_metas: list[dict[str, Any]] = []
     if folder:
         corpus_info = ensure_corpus(folder)
+        file_bindings, file_metas = xlsx_bindings(folder)
 
     plan: dict[str, Any] = {
         "created_at": datetime.now().isoformat(timespec="seconds"),
         "intent": intent, "corpus": corpus_info, "mode": "llm",
     }
+    if file_bindings:
+        plan["file_bindings"] = file_bindings
+        plan["files"] = file_metas
     try:
         from pipeline.llm import chat_json, tier_for
         schemas = _db_schemas()
@@ -336,6 +427,12 @@ def make_plan(spec: Any, sources: dict[str, Any], intent: str,
         static_lines += "\n" + "\n".join(
             f"- table/db need={b.get('need')} adapter={b.get('adapter')}"
             for b in other)
+        # F11：告知规划器用户提供的表格（选材时可直接判定 covered）
+        if file_metas:
+            static_lines += "\n" + "\n".join(
+                f"- 用户表格 need={m['need']} 文件={m['file']} "
+                f"列={('、'.join(m['headers']))[:80]}"
+                for m in file_metas if not m.get("error"))
         db_lines = "\n".join(f"- {ref}: {txt}" for ref, txt in schemas.items())
         run_params = "、".join(f"${k}（{v}）"
                                for k, v in (sources.get("params_schema") or {}).items())
@@ -364,6 +461,17 @@ def make_plan(spec: Any, sources: dict[str, Any], intent: str,
                                    f"{type(e).__name__}: {e}"))
         if needs:                       # 兜底：全部标 gap 交用户裁决
             plan["needs_coverage"] = [{"need": n, "status": "gap"} for n in needs]
+    # F11：确定性回执升级——需求词元命中用户表格文件名/列名 → 计已覆盖
+    if file_metas:
+        hay = " ".join((m.get("file") or "") + " " + " ".join(m.get("headers") or [])
+                       for m in file_metas)
+        for c in plan.get("needs_coverage") or []:
+            if c.get("status") != "gap":
+                continue
+            toks = [t for t in str(c.get("need", "")).split() if len(t) >= 2]
+            if toks and any(t in hay for t in toks):
+                c["status"] = "covered"
+                c["source"] = "xlsx"
     # 换库：意图文件夹建了新语料库 → 全部 rag 查询指向新库（不与模板库混用）
     if corpus_info:
         plan["corpus_switched"] = True
@@ -421,4 +529,6 @@ def plan_to_bindings(plan: dict[str, Any], sources: dict[str, Any]) -> list[dict
         if b.get("adapter") not in (_RAG_ADAPTER, _WEB_ADAPTER) \
                 and b.get("need") in kept:
             bindings.append(b)
+    # F11：用户资料文件夹的 xlsx 确定性绑定（事实层+表格层）
+    bindings.extend(plan.get("file_bindings") or [])
     return bindings

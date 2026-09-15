@@ -77,9 +77,27 @@ async def start(body: RunIn) -> dict:
 
 @router.post("/from_tree")
 async def from_tree(body: TreeRunIn) -> dict:
+    """树模式生成入口（A4 生成门禁）：
+    - intent/folder/plan 三者全空 → 422 拒绝（0 事实空谈稿不得出厂）
+    - plan 给出 → 校验 confirmed 持久化标记 + 无未裁决 gap（coverage_gate）
+    - 计划含 needs_folder（缺口裁决「我提供资料」）→ 必须给 folder（A5）"""
     from trees import store as tree_store
     if not tree_store.exists(body.tree_id):
         raise HTTPException(404, f"结构树不存在：{body.tree_id}")
+    if not (body.intent or body.folder or body.plan):
+        raise HTTPException(
+            422, "缺少取数来源：请先「出数据计划」完成缺口裁决并确认，"
+                 "或填写写作意图/本地资料文件夹（三者全空将生成无数据支撑的报告，已被门禁拦截）")
+    if body.plan:
+        plan = tree_store.load_plan(body.tree_id, body.plan)
+        if not plan.get("confirmed"):
+            raise HTTPException(422, "该数据计划尚未确认：请先完成缺口裁决并点「确认裁决」")
+        gate = tree_store.coverage_gate(plan)
+        if not gate["ok"]:
+            raise HTTPException(422, "计划仍有未裁决缺口："
+                                + "、".join(gate["unresolved"][:5]))
+        if plan.get("needs_folder") and not body.folder:
+            raise HTTPException(422, "该计划有缺口裁决为『我提供资料』，请填写本地资料文件夹")
     argv = ["--tree", body.tree_id, "--full"]
     for flag, v in (("--project", body.project), ("--period", body.period),
                     ("--intent", body.intent), ("--folder", body.folder),
@@ -257,10 +275,18 @@ async def judge_deep_endpoint(dir_name: str) -> dict:
 
 
 @router.get("")
-def history(type_id: str | None = None) -> list[dict]:
+def history(type_id: str | None = None, tree: str | None = None) -> list[dict]:
+    """V2 §三 §2：报告库统一列表（树模式 + 历史经典报告）。
+    tree 参数：按树 id 过滤（模板页「报告计数」跳转用）。"""
     root = _artifacts_root()
     markers = ("meta.json", "outline.json", "facts.json",
                "judge_report.json", "final.html")
+    tree_names: dict[str, str] = {}
+    try:
+        from trees import store as tree_store
+        tree_names = {t["id"]: t["name"] for t in tree_store.list_trees()}
+    except Exception:  # noqa: BLE001 —— 树列表不可用时不阻塞报告库
+        tree_names = {}
     out = []
     if root.exists():
         for d in root.iterdir():
@@ -270,6 +296,13 @@ def history(type_id: str | None = None) -> list[dict]:
                 entry = bus.summarize(d)
                 if type_id and entry.get("type_id") != type_id:
                     continue
+                if tree and entry.get("tree_id") != tree:
+                    continue
+                if entry.get("tree_id"):
+                    entry["source_name"] = tree_names.get(entry["tree_id"],
+                                                          entry["tree_id"])
+                else:
+                    entry["source_name"] = entry.get("type_name")
                 out.append(entry)
     out.sort(key=lambda x: x["mtime"], reverse=True)
     return out[:80]
@@ -284,11 +317,52 @@ def delete_run(dir_name: str, delete_files: bool = True) -> dict:
     return {"ok": True}
 
 
+@router.get("/{dir_name}/files")
+def list_files(dir_name: str) -> list[dict]:
+    """V2 §三 §3 详情页「文件」页签：产物目录清单（根 + rounds/<n>/ 一层）。
+    只读；后缀白名单，防路径穿越。"""
+    import time
+    d = _safe_dir(dir_name)
+    allowed = (".json", ".jsonl", ".html", ".png", ".docx", ".txt")
+    out = []
+    for p in sorted(d.iterdir(), key=lambda x: x.name):
+        if p.is_file() and p.suffix.lower() in allowed:
+            out.append({"name": p.name, "size": p.stat().st_size,
+                        "mtime": time.strftime(
+                            "%Y-%m-%d %H:%M",
+                            time.localtime(p.stat().st_mtime))})
+        elif p.is_dir() and p.name == "rounds":
+            for sub in sorted(p.iterdir(), key=lambda x: x.name):
+                if not sub.is_dir() or not sub.name.isdigit():
+                    continue
+                for f in sorted(sub.iterdir(), key=lambda x: x.name):
+                    if f.is_file() and f.suffix.lower() in allowed:
+                        out.append({"name": f"rounds/{sub.name}/{f.name}",
+                                    "size": f.stat().st_size,
+                                    "mtime": time.strftime(
+                                        "%Y-%m-%d %H:%M",
+                                        time.localtime(f.stat().st_mtime))})
+    return out
+
+
 @router.get("/artifact")
 def artifact(dir: str, file: str) -> FileResponse:
-    if "/" in file or "\\" in file or ".." in file:
+    """产物文件读取。V2 §三 §3：白名单放行 rounds/<n>/<name> 子目录
+    （反馈轮次的 diff/ops/reconcile/validate 快照），其余拒绝路径穿越。"""
+    if ".." in file or file.startswith("/"):
         raise HTTPException(403, "非法文件名")
-    p = _safe_dir(dir) / file
+    p = _safe_dir(dir)
+    if "/" in file:
+        parts = file.split("/")
+        if len(parts) != 3 or parts[0] != "rounds" \
+                or not parts[1].isdigit() or not parts[2] \
+                or "/" in parts[2] or "\\" in parts[2] or ".." in parts[2]:
+            raise HTTPException(403, "非法文件名")
+        p = p / "rounds" / parts[1] / parts[2]
+    else:
+        if "\\" in file:
+            raise HTTPException(403, "非法文件名")
+        p = p / file
     if not p.is_file():
         raise HTTPException(404, f"产物尚未生成：{file}")
     return FileResponse(p, media_type="application/json; charset=utf-8")

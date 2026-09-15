@@ -1,0 +1,161 @@
+{
+  "created_at": "2026-09-15T01:55:49",
+  "intent": "围绕国内稀土出口管制政策、出口量价变化、重点企业动向及影响的客观分析报告，约3000字。（主体：国内稀土出口管制与产业动态）",
+  "corpus": null,
+  "mode": "llm",
+  "subject": "国内稀土出口管制与产业动态",
+  "focus": "围绕近一年稀土出口管制政策、出口量价变化、重点企业动向及其对国内外产业链影响，形成约3000字客观分析报告",
+  "rag": [
+    {
+      "need": "corpus_policy",
+      "query": "稀土出口管制 商务部 公告 管制物项清单 许可证",
+      "top_k": 5
+    },
+    {
+      "need": "corpus_export_data",
+      "query": "稀土出口量 出口金额 稀土永磁 海关 月度数据",
+      "top_k": 5
+    },
+    {
+      "need": "corpus_company",
+      "query": "中国稀土集团 北方稀土 盛和资源 产能 项目 公告",
+      "top_k": 5
+    },
+    {
+      "need": "corpus_industry",
+      "query": "稀土行业整合 下游永磁 需求 价格传导",
+      "top_k": 5
+    },
+    {
+      "need": "corpus_global",
+      "query": "全球稀土供需格局 海外供应 美国缅甸 进口替代",
+      "top_k": 5
+    }
+  ],
+  "web": [
+    {
+      "need": "web_policy_latest",
+      "query": "商务部 2024 2025 稀土出口管制 公告 管制清单 调整",
+      "top_k": 6,
+      "fetch_pages": 3
+    },
+    {
+      "need": "web_export_data",
+      "query": "2024 2025 中国稀土出口数量 出口金额 稀土永磁材料 月度 海关总署",
+      "top_k": 6,
+      "fetch_pages": 3
+    },
+    {
+      "need": "web_company_news",
+      "query": "中国稀土集团 北方稀土 盛和资源 2025 最新公告 产能 调整 动态",
+      "top_k": 6,
+      "fetch_pages": 3
+    },
+    {
+      "need": "web_global_market",
+      "query": "全球稀土供需 2025 海外替代供应 缅甸 美国mp materials 价格走势",
+      "top_k": 6,
+      "fetch_pages": 3
+    },
+    {
+      "need": "web_international_response",
+      "query": "稀土出口管制 世贸组织 国际规则 表态 2024 2025",
+      "top_k": 6,
+      "fetch_pages": 3
+    }
+  ],
+  "db": [],
+  "tables_kept": [],
+  "needs_coverage": [
+    {
+      "need": "稀土出口管制政策要点",
+      "status": "covered"
+    },
+    {
+      "need": "近期出口量价走势",
+      "status": "covered"
+    },
+    {
+      "need": "重点企业经营动态",
+      "status": "covered"
+    },
+    {
+      "need": "稀土出口管制政策文件",
+      "status": "covered"
+    },
+    {
+      "need": "管制物项清单",
+      "status": "covered"
+    },
+    {
+      "need": "许可证与监管措施",
+      "status": "covered"
+    },
+    {
+      "need": "国际规则相关表态",
+      "status": "search"
+    },
+    {
+      "need": "稀土出口数量数据",
+      "status": "qualitative",
+      "decision": "qualitative"
+    },
+    {
+      "need": "稀土出口金额数据",
+      "status": "search"
+    },
+    {
+      "need": "出口平均单价",
+      "status": "search"
+    },
+    {
+      "need": "分品类/分月度口径",
+      "status": "search"
+    },
+    {
+      "need": "重点企业公告与经营数据",
+      "status": "covered"
+    },
+    {
+      "need": "产能与项目动态",
+      "status": "covered"
+    },
+    {
+      "need": "行业整合动态",
+      "status": "covered"
+    },
+    {
+      "need": "下游需求与价格传导",
+      "status": "covered"
+    },
+    {
+      "need": "海外进口国替代供应情况",
+      "status": "search"
+    },
+    {
+      "need": "全球稀土供需格局",
+      "status": "covered"
+    },
+    {
+      "need": "政策不确定性因素",
+      "status": "covered"
+    },
+    {
+      "need": "海外供应风险",
+      "status": "search"
+    },
+    {
+      "need": "价格波动风险",
+      "status": "covered"
+    }
+  ],
+  "decisions": [
+    {
+      "need": "稀土出口数量数据",
+      "decision": "qualitative",
+      "ts": "2026-09-15T01:58:59"
+    }
+  ],
+  "confirmed": true,
+  "confirmed_at": "2026-09-15T01:58:59"
+}

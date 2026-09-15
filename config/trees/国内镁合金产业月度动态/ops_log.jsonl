@@ -1,0 +1,3 @@
+{"ts": "2026-09-15T10:13:59", "actor": "agent", "op": {"action": "create"}, "summary": "对话生成整棵树", "version_after": 1, "fingerprint": "b7b852228a05"}
+{"ts": "2026-09-15T10:14:28", "actor": "manual", "op": {"action": "save"}, "summary": "编辑器保存", "version_after": 2, "fingerprint": "e101a72ada29"}
+{"ts": "2026-09-15T10:17:08", "actor": "agent", "op": {"action": "chat_edit", "ops": [{"action": "remove_section", "section_id": "风险提示"}]}, "summary": "已删除“风险提示”一节。", "version_after": 3, "fingerprint": "90614154d07c"}

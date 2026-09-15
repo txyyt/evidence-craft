@@ -1,20 +1,29 @@
-/* 根组件：平台壳（侧边导航 + 顶栏页头 + 内容区 hash 路由）。蓝色主题、SVG 图标。 */
+/* 根组件：平台壳（侧边导航 + 顶栏页头 + 内容区 hash 路由）。
+   V2 §三：导航 4 项（新建报告/报告库/模板/设置）+ 参数路由 /reports/:dir
+   + 旧路由重定向（overview/trees/generate/types → 新路由）。 */
 (function () {
-  const { createApp, ref, computed, onMounted, h } = Vue;
+  const { createApp, ref, computed, h } = Vue;
 
   const NAV = [
-    { key: '/overview', label: '首页', icon: 'home' },
-    { key: '/trees', label: '模板工作台', icon: 'edit' },
-    { key: '/generate', label: '报告生成', icon: 'play' },
-    { key: '/types', label: '报告类型管理', icon: 'layers' },
-    { key: '/settings', label: '系统设置', icon: 'settings' },
+    { key: '/new', label: '新建报告', icon: 'plus' },
+    { key: '/reports', label: '报告库', icon: 'home' },
+    { key: '/templates', label: '模板', icon: 'edit' },
+    { key: '/settings', label: '设置', icon: 'settings' },
   ];
   const META = {
-    '/overview': { title: '首页', desc: '总览与快捷入口', icon: 'home' },
-    '/trees': { title: '模板工作台', desc: '对话生成与手动编辑报告结构树，确认数据计划后生成', icon: 'edit' },
-    '/generate': { title: '报告生成', desc: '选择报告类型，生成报告并查看结果', icon: 'play' },
-    '/types': { title: '报告类型管理', desc: '创建和维护报告类型：报告结构、数据来源、验证与版本', icon: 'layers' },
+    '/new': { title: '新建报告', desc: '三步向导：结构 → 数据 → 生成', icon: 'plus' },
+    '/reports': { title: '报告库', desc: '全部生成记录：预览、反馈迭代、治理体检', icon: 'home' },
+    '/reports/:dir': { title: '报告详情', desc: '预览 · 反馈迭代 · 治理体检 · 文件 · 元信息', icon: 'home' },
+    '/templates': { title: '模板', desc: '报告结构树：对话生成、手动编辑、版本回滚与派生', icon: 'edit' },
     '/settings': { title: '系统设置', desc: '大模型、流水线参数与全局数据连接', icon: 'settings' },
+  };
+  // §三 §1：旧路由重定向（含 /run?dir=X 的参数改写）
+  const REDIRECTS = {
+    '/overview': '/reports',
+    '/trees': '/templates',
+    '/generate': '/reports',
+    '/types': '/templates',
+    '/run': (q) => (q.dir ? '/reports/' + encodeURIComponent(q.dir) : '/reports'),
   };
 
   const Shell = {
@@ -25,22 +34,40 @@
         message[fn](content);
       };
 
-      const route = ref(location.hash.replace(/^#/, '').split('?')[0] || '/overview');
+      const route = ref(location.hash.replace(/^#/, '').split('?')[0] || '/reports');
       const routeQuery = ref({});
       function readHash() {
-        const raw = location.hash.replace(/^#/, '') || '/overview';
+        const raw = location.hash.replace(/^#/, '') || '/reports';
         const [path, qs] = raw.split('?');
         const query = {};
         if (qs) for (const kv of qs.split('&')) {
           const [k, v] = kv.split('=');
           if (k) query[k] = decodeURIComponent(v || '');
         }
-        route.value = path || '/overview';
+        // §0：参数路由 /reports/:dir → 视图键 /reports/:dir（query.dir 同步）
+        const paramMatch = path.match(/^\/reports\/([^/]+)$/);
+        let resolved = path;
+        if (paramMatch) {
+          resolved = '/reports/:dir';
+          query.dir = decodeURIComponent(paramMatch[1]);
+        }
+        // §1：旧路由重定向（含 /run?dir=X 的参数改写）
+        const redir = REDIRECTS[resolved];
+        if (redir) {
+          const target = typeof redir === 'function' ? redir(query) : redir;
+          const qs2 = resolved === '/run' ? '' :
+            (Object.keys(query).length
+              ? '?' + Object.entries(query).map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&')
+              : '');
+          location.replace('#' + target + (target.includes('?') ? '' : qs2));
+          return;
+        }
+        route.value = resolved || '/reports';
         routeQuery.value = query;
       }
       window.addEventListener('hashchange', readHash);
       readHash();
-      const meta = computed(() => META[route.value] || META['/overview']);
+      const meta = computed(() => META[route.value] || META['/reports']);
       Vue.watchEffect(() => { document.title = `${meta.value.title} · EvidenceCraft`; });
 
       const menuOptions = NAV.map((n) => ({
@@ -48,14 +75,20 @@
         icon: () => h('span', { style: 'display:flex', innerHTML: EC.ic[n.icon](17) }),
       }));
       function go(key) { location.hash = key; }
+      // 菜单高亮：/reports/:dir 也高亮报告库
+      const activeKey = computed(() => {
+        if (route.value === '/reports' || route.value === '/reports/:dir')
+          return '/reports';
+        return route.value;
+      });
 
-      return { route, routeQuery, meta, menuOptions, go };
+      return { route, routeQuery, meta, menuOptions, go, activeKey };
     },
     template: `
       <n-layout has-sider style="height:100vh">
         <n-layout-sider bordered :width="208" content-style="display:flex;flex-direction:column;height:100%">
           <div class="ec-logo"><span class="mark">EC</span>EvidenceCraft</div>
-          <n-menu :value="route" :options="menuOptions" @update:value="go" style="flex:1" />
+          <n-menu :value="activeKey" :options="menuOptions" @update:value="go" style="flex:1" />
           <div class="ec-sider-foot">单机版 · 报告生成工具</div>
         </n-layout-sider>
         <n-layout>
@@ -81,7 +114,7 @@
   Shell.setup = function () {
     const ret = _origSetup();
     ret.routeComponent = computed(() => {
-      const view = EC.views[ret.route.value] || EC.views['/overview'];
+      const view = EC.views[ret.route.value] || EC.views['/reports'] || Object.values(EC.views)[0];
       return view.component;
     });
     ret.routeKey = computed(() => ret.route.value + JSON.stringify(ret.routeQuery.value));
@@ -121,6 +154,7 @@
     const msg = String((err && err.message) || err).slice(0, 60);
     document.title = `渲染错误: ${msg}`;
     window.__lastErr = `${msg} @${info}`;
+    window.__lastErrStack = String((err && err.stack) || '');
   };
   window.addEventListener('error', (e) => {
     window.__lastErr = String(e.message || e);

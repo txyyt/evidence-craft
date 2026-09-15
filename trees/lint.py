@@ -1,12 +1,15 @@
 """树 linter：确定性结构检查（不依赖 LLM）。
 
 errors（拦保存）：Spec v2 schema 违规——views 节缺槽位、table 节缺引用、
-  章节 id 重复等由 SpecV2 校验兜住。
+  章节 id 重复等由 SpecV2 校验兜住；节标题重复（A2，同标题节会在渲染与
+  反馈定位时歧义）。
 warnings（随保存返回前端展示的软警告）：
   - 节未声明 data_needs → 生成时可能无数据支撑
   - 图引用 table:<tid> 但 tables[] 无此 id → 渲染期缺表
   - facts_rows 表缺 source_prefix
   - heading 缺失且非 inline（渲染层会退回 title，提示用户确认编号形态）
+  - 孤儿表模板：tables[] 中 id 无任何节引用（A3）
+  - 节 brief/style 提到"表"但既非 table 节也未挂表格模板（A3，模型被迫手写表）
 """
 
 from typing import Any
@@ -30,6 +33,16 @@ def lint(spec_dict: dict[str, Any]) -> dict[str, list[str]]:
         return {"errors": errors, "warnings": warnings}
 
     table_ids = {t.id for t in spec.tables}
+    referenced = {s.table for s in spec.sections if s.kind == "table" and s.table}
+    has_table_sec = any(s.kind == "table" for s in spec.sections)
+    # A2：同标题查重（error，拦保存）
+    seen: dict[str, str] = {}
+    for s in spec.sections:
+        if s.title in seen:
+            errors.append(f"节标题重复：「{s.title}」（{seen[s.title]} 与 {s.id}），"
+                          "请删除或改名其一")
+        else:
+            seen[s.title] = s.id
     for s in spec.sections:
         if not s.data_needs:
             warnings.append(f"节「{s.title}」未声明数据需求（data_needs），"
@@ -47,4 +60,16 @@ def lint(spec_dict: dict[str, Any]) -> dict[str, list[str]]:
                                 "source_prefix（事实 id 前缀）")
         if not s.heading and not s.inline and not s.subheading:
             warnings.append(f"节「{s.title}」未配置 heading，渲染将按顺序自动编号")
+        # A3：brief/style 点名要表但全树没有任何表格节（模型会被迫手写 markdown 表）
+        if not has_table_sec and s.kind != "table" and not s.table \
+                and "表" in (s.style or "") and "表明" not in (s.style or "") \
+                and "表达" not in (s.style or ""):
+            warnings.append(f"节「{s.title}」的写作要求提到表格，但全树没有任何"
+                            "表格节——请加 kind=table 节并挂表格模板，"
+                            "否则模型会在正文手写 markdown 表")
+    # A3：孤儿表模板（没有任何 table 节引用）
+    for t in spec.tables:
+        if t.id not in referenced:
+            warnings.append(f"表格模板「{t.id}」没有任何节引用（孤儿模板），"
+                            "请在某个 kind=table 节上引用它，或删除该模板")
     return {"errors": errors, "warnings": warnings}

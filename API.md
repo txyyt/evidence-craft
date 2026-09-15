@@ -163,3 +163,68 @@ SSE 事件协议：`{type: progress|end, stage, message, data|None, ts}`，end �
 chat.json replay_result.json dryrun_result.json meta.json）。
 安全约定（M8 起生效）：凭据只进 settings.yaml，API 响应密钥一律掩码；
 spec/profile 每次保存前自动快照；artifacts/workspace 路径参数白名单校验。
+
+## V2 工作台新增端点（2026-09-15 树 id 中文化 + 三阶段改造）
+
+树模式 API 只增不改；经典入口（/api/runs/start、/api/runs/preview、routes_types）
+冻结保留语义。静态前端路由：`#/new`（向导）、`#/reports`（报告库）、
+`#/reports/:dir`（详情五页签）、`#/templates`（模板页）、`#/settings`；
+旧路由（#/overview、#/trees、#/generate、#/types、#/run?dir=）重定向。
+
+### 结构树（/api/trees）
+
+| 路由 | 契约 |
+|---|---|
+| `GET /api/trees/style-cards/all` | 全部文风卡（含 rules 全文与 excerpts——编辑器预览用） |
+| `POST /api/trees/style-cards {id, name, desc?, rules?, excerpts?}` | **V3-C 新增**：新建自定义文风卡，写入即落盘 `config/style_cards/<id>.yaml`（UTF-8，无缓存立即生效）；id 重复 **409**、id 非法（须 `^[A-Za-z0-9_]{1,40}$`）**422** |
+| `PUT /api/trees/style-cards/{id}` | **V3-C 新增**：保存自定义文风卡（内置三卡 **403**；不存在 **404**；body.id 与 URL 不一致 **422**） |
+| `DELETE /api/trees/style-cards/{id}` | **V3-C 新增**：删除自定义文风卡（内置卡 **403**）；被树引用时 **409** 附引用树清单 |
+| `GET /api/trees/templates` | 内置示例树清单（config/tree_templates/）：`{id, name, description, genre, style_card, n_sections}` |
+| `POST /api/trees/templates/copy {template_id}` | 示例树 → 复制为可编辑草稿；id 自动去重；provenance `{kind: template}` |
+| `POST /api/trees/{id}/copy` | 树派生（F10）：新 id=`原名_派生N`，provenance 记父树与父版本 |
+| `PUT /api/trees/{id}` | 保存（新增）：body 可带 `base_version`——乐观锁，不符返回 **409**；lint error（如节标题重复）返回 **422** 拦保存 |
+| `POST /api/trees/{id}/chat {message, base_version?}` | 对话改树；base_version 乐观锁共用；返回 `{applied, summary, version, fingerprint, lint, changed}` |
+| `POST /api/trees/{id}/plan/confirm` | 确认门槛通过时在计划文件持久化 `confirmed/confirmed_at`（A4 门禁复查依据） |
+| `POST /api/trees/{id}/plan/preview {plan_file}` | **F9 预检**：按计划只跑数据层 → `{ok, n_facts, by_source, crosscheck, sample, warnings, fingerprint, cached}`；计划内容指纹（rag/web/db/tables_kept/corpus/mode/**file_bindings**——V3-E6 补）一致时复用 `plans/_preview_<fp>.json` 缓存 |
+
+节 id 约定（V2）：中/英/数字/下划线/连字符；agent 生成与对话加节默认
+id=节标题；**报告生成后不要修改 id**（改 id 等于换节，反馈定位失效）。
+
+### 报告运行（/api/runs）
+
+| 路由 | 契约 |
+|---|---|
+| `POST /api/runs/from_tree {tree_id, plan?, intent?, folder?}` | **A4 生成门禁**：三来源全空 → 422；plan 未 confirmed → 422；plan 有未裁决 gap → 422；plan.needs_folder 且无 folder → 422（A5） |
+| `GET /api/runs?type_id=&tree=` | 报告库列表：条目新增 `tree_id`/`source_name`（树名或类型名）；`tree` 过滤同树报告（双向追溯） |
+| `GET /api/runs/{dir}/files` | 详情页「文件」页签：根文件 + `rounds/<n>/` 一层清单（后缀白名单） |
+| `GET /api/runs/artifact?dir&file` | file 白名单放行 `rounds/<n>/<name>` 三段形式 |
+
+### 反馈回路（语义不变，字段新增）
+
+- judge issues 每项带 `kind: structure|data|style`（F3：结构类不喂 revise，
+  修订循环确定性处理——重复节删除/缺表插表格节，只改运行内存不动树）。
+- `POST /api/runs/{dir}/judge` 深度评审返回 `method: "median_of_3"`、
+  `runs/raw_runs`（三次原始分）、`spread`（各维极差）、`unstable`（极差>4 维度）（F8）。
+- `GET /api/runs/{dir}/feedback/rounds` 条目新增 `reconcile/validate`（C3 轮次
+  徽标）与 `tree_lint {errors, warnings, items}`（F12 树健康）；回滚条目
+  （无 rounds 目录）同样可见。
+- 流水线产物新增 `revision_history.json`：`{rounds:[{round, issues, lens}],
+  structure_notes, thin_warnings}`（收敛性基线数据源，F1/F3/F4）。
+
+### CLI（run_pipeline.py）
+
+| 参数 | 契约 |
+|---|---|
+| `--tree X --plan Y` 且计划含 needs_folder | 必须给 `--folder`（否则 SystemExit，A5）；folder 会现场建语料 + 生成 xlsx 绑定 |
+| `--tree` 且 `--plan/--intent/--folder` 全空 | SystemExit 门禁；`--allow-qualitative` 显式放行全定性生成（A4） |
+| `settings.pipeline` | 新增 `write_temperature`（写作/修订，建议 0.3）、`judge_temperature`（评审，建议 0）——缺省不传保持旧行为（F5/F7）；`section_concurrency`（分节并行，缺省 3，置 1 回退串行，F13）；`revise_rounds` 代码缺省 2→3（F6） |
+
+### Excel 数据接入（F11）
+
+资料文件夹支持 PDF+XLSX 混合：每个 xlsx 生成一条确定性 `xlsx_table` 绑定
+（id/table_id=文件名词干、sheet 首个、id_column=首个非空列、value_columns
+采样前 50 行识别数值列、unit 取列名括号内容、table_columns 全部列），随计划
+`file_bindings` 落盘并进 `plan_to_bindings`；事实层进对账、表格层供
+`table:<table_id>` 图表源与 `generic_rows` 表格节；needs_coverage 命中表格
+文件名/列名的 gap 自动升级 covered（source=xlsx）。`ensure_corpus` 无 PDF
+时返回 None（不再报错）。

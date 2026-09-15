@@ -13,8 +13,8 @@ from datetime import datetime
 import re
 from typing import Any
 
-from pipeline.llm import chat_json, tier_for
-from pipeline.reconcile import _CITE_RE, norm_citation
+from pipeline.llm import chat_json, pipeline_temperature, tier_for
+from pipeline.reconcile import norm_citation
 from template_factory.schema import SpecV2
 
 SYSTEM = """你是{role}，撰写报告的一个段落。
@@ -105,9 +105,28 @@ TEXT_TMPL = """本节主题：{title}
 """
 
 
+# E5/F5：_strip_cites 专用剥除正则——比对账侧 _CITE_RE 覆盖更宽：
+# 方括号/全角方括号［］/【】包裹、全角半角圆括号包裹的点分编号、
+# 以及行内裸编号（rag.02.00）四类形态统一剥除
+_STRIP_CITE_RE = re.compile(
+    r"[\[\【［][^\]\】］]{1,24}[\]\】］]"
+    r"|(?=[（(][^\s（）()]*\.)[（(][^\s（）()]{1,80}[）)]"
+    r"|(?<![A-Za-z0-9])[a-z]{2,4}[.\-]\d{1,4}[.\-]\d{1,4}(?![A-Za-z0-9])")
+
+
 def _strip_cites(body: str) -> str:
-    """正文净版：剥除 [rag.01.02] 类引用标注（编号只留在 cited_fact_ids）。"""
-    return _CITE_RE.sub("", body or "")
+    """正文净版：剥除 [rag.01.02] 类引用标注（编号只留在 cited_fact_ids）。
+    F5：覆盖方括号/全角方括号［］/【】/全角半角圆括号包点分编号/行内裸编号
+    四种形态；剥除发生时清理空括号与多余空格标点（无编号正文原样返回，
+    零变化）。对已生成产物不回改。"""
+    s = body or ""
+    out = _STRIP_CITE_RE.sub("", s)
+    if out == s:
+        return s
+    out = re.sub(r"[（(]\s*[）)]", "", out)          # 剥空后的空括号
+    out = re.sub(r"[ \t]{2,}", " ", out)
+    out = re.sub(r"\s+([，。；、,.：:；])", r"\1", out)
+    return out
 
 
 def _structure_facts(doc: dict[str, Any]) -> str:
@@ -208,7 +227,7 @@ def gen_risks(doc: dict[str, Any], spec: SpecV2,
                             risk_clues=clues, style=risk_sec.style or "")
     out = chat_json(_system(spec, spec.fewshot_for(risk_sec), doc), user,
                     schema_hint='只输出 JSON：body/cited_fact_ids。',
-                    tier=tier_for("write"))
+                    tier=tier_for("write"), temperature=pipeline_temperature("write"))
     out["body"] = _strip_cites(out.get("body", ""))
     out["cited_fact_ids"] = _citations_resolvable(doc, out.get("cited_fact_ids") or [])
     return out
@@ -305,6 +324,38 @@ def _default_facts(doc: dict[str, Any], spec: SpecV2, slot_id: str) -> list[str]
     return out
 
 
+# ---------- E4 残句防线（生成即拦截，重试一次） ----------
+
+_TRUNC_HINT = ("\n【警告】上一稿仅 {n} 字、疑似未写完被丢弃。"
+               "请一次完整输出 {lo}~{hi} 字的成稿，不要中途停笔。")
+
+
+def _body_floor(sec: Any) -> int:
+    """E4 残句判定下限：max(60, 字数区间下限×0.5)；无区间取 60。"""
+    chk = getattr(sec, "check", None)
+    if chk is not None and getattr(chk, "body_len", None):
+        return max(60, int(tuple(chk.body_len)[0] * 0.5))
+    return 60
+
+
+def _trunc_retry(out: dict[str, Any], sec: Any, again: Any) -> dict[str, Any]:
+    """E4：正文 < _body_floor 判疑似搁笔残句，立即重试一次（提示词追加
+    "疑似未写完"警告）；重试达标则采用，仍短则接受第二次产出并附 thin
+    警示（键 "thin"，调用侧收集落盘）。正常长度零重试。"""
+    body = (out or {}).get("body") or ""
+    floor = _body_floor(sec)
+    if len(body) >= floor:
+        return out
+    chk = getattr(sec, "check", None)
+    lo, hi = (tuple(chk.body_len) if chk is not None and chk.body_len
+              else (floor * 2, floor * 4))
+    out2 = again(_TRUNC_HINT.format(n=len(body), lo=lo, hi=hi))
+    if len((out2 or {}).get("body") or "") >= floor:
+        return out2
+    out2["thin"] = f"残句重试后仍短（{len(out2.get('body') or '')} 字 < 下限 {floor}）"
+    return out2
+
+
 def gen_view(doc: dict[str, Any], view: dict[str, Any],
              spec: SpecV2) -> dict[str, Any]:
     views_sec = spec.section("views")
@@ -319,19 +370,23 @@ def gen_view(doc: dict[str, Any], view: dict[str, Any],
     facts_text, _ = _fact_block(doc, cited)
     context_lines = [f"{n['time'][:10]} {n['title']}"
                      for n in (doc["collections"].get("news") or [])[:8]]
-    user = VIEW_TMPL.format(
-        slot_id=view["slot_id"], heading=view["heading"],
-        guidance=view.get("guidance", ""), brief=brief,
-        style=views_sec.view_style or "",
-        facts=facts_text, context="\n".join(context_lines) or "（无）",
-    )
-    out = chat_json(_system(spec, spec.fewshot_for(views_sec, view["slot_id"]), doc),
-                    user,
-                    schema_hint='只输出 JSON 对象：heading/body/cited_fact_ids 三个字段。',
-                    tier=tier_for("write"))
-    out["body"] = _strip_cites(out.get("body", ""))
-    out["slot_id"] = view["slot_id"]
-    return out
+
+    def _once(extra: str = "") -> dict[str, Any]:
+        user = VIEW_TMPL.format(
+            slot_id=view["slot_id"], heading=view["heading"],
+            guidance=(view.get("guidance", "") or "") + extra,
+            brief=brief, style=views_sec.view_style or "",
+            facts=facts_text, context="\n".join(context_lines) or "（无）",
+        )
+        out = chat_json(_system(spec, spec.fewshot_for(views_sec, view["slot_id"]), doc),
+                        user,
+                        schema_hint='只输出 JSON 对象：heading/body/cited_fact_ids 三个字段。',
+                        tier=tier_for("write"), temperature=pipeline_temperature("write"))
+        out["body"] = _strip_cites(out.get("body", ""))
+        out["slot_id"] = view["slot_id"]
+        return out
+
+    return _trunc_retry(_once(), views_sec, _once)
 
 
 def forecast_table(doc: dict[str, Any], tpl: Any = None) -> str:
@@ -399,7 +454,9 @@ _RENDERERS = {"consensus_pe": forecast_table, "generic_rows": _generic_rows_tabl
 
 def gen_text_section(doc: dict[str, Any], sec: Any, plan: dict[str, Any],
                      spec: SpecV2) -> dict[str, Any]:
-    """text 章节：综述/背景类，整节独立成文（数字同样逐一对账）。"""
+    """text 章节：综述/背景类，整节独立成文（数字同样逐一对账）。
+    E4：产出疑似残句（< max(60, 字数下限×0.5)）时立即重试一次，仍短则接受
+    并在返回值附 thin 警示。"""
     cited = [t for t in (norm_citation(x) for x in (plan.get("cited_fact_ids") or []))
              if t]
     facts_text, _ = _fact_block(doc, cited)
@@ -409,16 +466,58 @@ def gen_text_section(doc: dict[str, Any], sec: Any, plan: dict[str, Any],
             context_lines.append(f"{p.get('date') or ''} {p['title']}——{p['digest']}")
     for n in (doc["collections"].get("news") or [])[:6]:
         context_lines.append(f"{n['time'][:10]} {n['title']}")
-    user = TEXT_TMPL.format(
-        title=sec.title, style=sec.style or "", guidance=plan.get("guidance", ""),
-        facts=facts_text, context="\n".join(context_lines) or "（无）")
-    out = chat_json(_system(spec, spec.fewshot_for(sec), doc), user,
-                    schema_hint="只输出 JSON 对象：body/cited_fact_ids 两个字段。",
-                    tier=tier_for("write"))
-    out["body"] = _strip_cites(out.get("body", ""))
-    out["section_id"] = sec.id
-    out["cited_fact_ids"] = _citations_resolvable(doc, out.get("cited_fact_ids") or [])
-    return out
+
+    def _once(extra: str = "") -> dict[str, Any]:
+        user = TEXT_TMPL.format(
+            title=sec.title, style=sec.style or "",
+            guidance=(plan.get("guidance", "") or "") + extra,
+            facts=facts_text, context="\n".join(context_lines) or "（无）")
+        out = chat_json(_system(spec, spec.fewshot_for(sec), doc), user,
+                        schema_hint="只输出 JSON 对象：body/cited_fact_ids 两个字段。",
+                        tier=tier_for("write"), temperature=pipeline_temperature("write"))
+        out["body"] = _strip_cites(out.get("body", ""))
+        out["section_id"] = sec.id
+        out["cited_fact_ids"] = _citations_resolvable(doc, out.get("cited_fact_ids") or [])
+        return out
+
+    return _trunc_retry(_once(), sec, _once)
+
+
+# ---------- F4 数据稀薄前置 ----------
+
+THIN_DATA_NOTE = "\n本节数据稀薄，以定性论述为主，禁止堆砌物性参数凑字数"
+
+
+def facts_for_section(doc: dict[str, Any], sec: Any) -> int:
+    """估计该节可引用的事实数（data_needs 词元命中事实名/编号；无声明视为全部）。"""
+    if not sec.data_needs:
+        return len(doc.get("facts") or [])
+    toks = [t for need in sec.data_needs for t in need.split() if len(t) >= 2]
+    if not toks:
+        return len(doc.get("facts") or [])
+    return sum(1 for f in doc.get("facts") or []
+               if any(t in f.get("name", "") or t in f.get("id", "")
+                      for t in toks))
+
+
+def thin_section_if_needed(sec: Any, doc: dict[str, Any],
+                           plan: dict[str, Any]) -> tuple[Any, bool]:
+    """F4（E3 判据）：节声明了 data_needs 且两个数据信号**都**稀缺——
+    可引用事实 <3 且大纲计划引用事实数 <3——时，返回注入定性声明的节副本。
+    任一信号 ≥3 即跳过（旧版 min() 写法在 token 匹配失败 n_avail=0 时会
+    连"大纲已引用 5 条事实"的节也误注入，反而压制用数，必须两信号都缺）。
+    brief 关键词判断已删除（"定量复盘/配折线图"类措辞漏网，P6 实锤）。
+    已知局限：数量判据识别不了"事实不相关"（引用数够但口径全不对），
+    该情况由 E4 残句防线与 E1/E2 修订出口兜底。
+    返回 (sec|副本, 是否注入)。只改本节写作要求，不动树。"""
+    if not sec.data_needs:
+        return sec, False
+    n_avail = facts_for_section(doc, sec)
+    old_cited = len(plan.get("cited_fact_ids") or [])
+    if n_avail >= 3 or old_cited >= 3:
+        return sec, False
+    return (sec.model_copy(
+        update={"style": (sec.style or "") + THIN_DATA_NOTE}), True)
 
 
 def render_table_sec(doc: dict[str, Any], sec: Any, spec: SpecV2) -> str:
@@ -451,7 +550,7 @@ def gen_forecast_note(doc: dict[str, Any], spec: SpecV2) -> dict[str, Any]:
                                 fact_ids=", ".join(ids[:8]), style=table_sec.style or "")
     return chat_json(_system(spec, spec.fewshot_for(table_sec), doc),
                      user, schema_hint="只输出 JSON：body/cited_fact_ids。",
-                     tier=tier_for("write"))
+                     tier=tier_for("write"), temperature=pipeline_temperature("write"))
 
 
 TABLE_NOTE_TMPL = """以下是系统生成的表格（正文所有表格数字以它为准）：
@@ -475,7 +574,7 @@ def gen_table_note(doc: dict[str, Any], sec: Any, spec: SpecV2) -> dict[str, Any
                                   style=sec.style or "")
     out = chat_json(_system(spec, spec.fewshot_for(sec), doc), user,
                     schema_hint="只输出 JSON：body/cited_fact_ids。",
-                    tier=tier_for("write"))
+                    tier=tier_for("write"), temperature=pipeline_temperature("write"))
     out["body"] = _strip_cites(out.get("body", ""))
     out["section_id"] = sec.id
     out["cited_fact_ids"] = _citations_resolvable(doc, out.get("cited_fact_ids") or [])

@@ -1,0 +1,105 @@
+tree:
+  id: 国内镁合金产业月度动态
+  name: 国内镁合金产业月度动态
+  subject: 国内镁合金产业月度运行情况（供需、价格、企业动态）
+  status: draft
+  version: 3
+  created_at: '2026-09-15T10:13:59'
+  provenance:
+    kind: dialogue
+  updated_at: '2026-09-15T10:17:08'
+report_type: 国内镁合金产业月度动态
+version: 2
+description: 围绕国内原镁与镁合金的供需、价格、重点企业与风险，形成客观克制的月度动态研报，全文约3000字。
+writer_role: 有色金属/新材料行业分析师
+title_style: 客观陈述式标题，如'XX月国内镁合金产业动态：供需与价格回顾'，不加夸张修饰
+title_check: {}
+sections:
+- id: 摘要
+  title: 摘要
+  kind: text
+  style: 概括本月镁合金产业供需、价格、企业动态与核心风险，200-300字，突出关键数据结论。
+  data_needs:
+  - 本月原镁产量与库存变化
+  - 镁锭价格区间与环比涨跌
+  - 重点企业公告要点
+  origin: user
+  check: {}
+  heading: 摘要
+  inline: false
+  view_slots: []
+  charts: []
+- id: 原镁供需
+  title: 原镁供需
+  kind: text
+  style: 分析当月国内原镁产量、开工情况、下游需求（铝合金添加、钢铁脱硫、压铸等）及进出口变化，400-600字，配供需对比柱状图。
+  data_needs:
+  - 当月原镁产量与产能利用率
+  - 主要下游领域需求量
+  - 原镁进出口数据
+  origin: user
+  check: {}
+  heading: 1　原镁供需
+  inline: false
+  view_slots: []
+  charts:
+  - id: supply_demand_bar
+    title: 近期国内原镁月度供需对比
+    type: bar
+    source: facts:rag
+    y: []
+    unit: 万吨
+    note: ''
+    bins: 10
+- id: 价格走势
+  title: 价格走势
+  kind: table
+  style: 描述本月镁锭及主要镁合金产品价格变动，指出高低点与均价，400-500字，并附近期价格区间表（产品、区间低值、区间高值、均价、环比）。
+  data_needs:
+  - 镁锭现货价格日度数据
+  - 镁合金产品价格
+  - 兰炭、硅铁等成本端价格
+  origin: user
+  check: {}
+  heading: 2　价格走势
+  inline: false
+  view_slots: []
+  table: price_range_table
+  charts: []
+- id: 重点企业动态
+  title: 重点企业动态
+  kind: text
+  style: 梳理本月主要原镁及镁合金生产企业的产能、技改、订单、公告等信息，每家企业100字左右，共500-600字，只陈述事实。
+  data_needs:
+  - 重点企业公告与新闻
+  - 产能与技改项目进展
+  - 上市公司月度经营信息
+  origin: user
+  check: {}
+  heading: 3　重点企业动态
+  inline: false
+  view_slots: []
+  charts: []
+tables:
+- id: price_range_table
+  renderer: facts_rows
+  columns: []
+  source_prefix: rag
+writing_rules:
+- 口吻客观克制，以数据与事实为主，避免主观推断
+- 全文控制在2800-3200字
+- 数据口径以国家统计局、协会、行业资讯与企业公告为准，注明时间范围
+- 价格、供需数据须标注单位与统计期
+- 风险提示部分只陈述风险因素，不给出投资建议
+forbidden_words:
+- 非常
+- 极其
+- 绝对
+- 众所周知
+- 暴涨暴跌
+- 我觉得
+controlled_vocab: {}
+check_rules: []
+industry_keywords: []
+style_card: industry_research
+genre: brief

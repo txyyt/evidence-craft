@@ -1,0 +1,96 @@
+{
+  "created_at": "2026-09-15T01:15:41",
+  "intent": "国内高纯石英市场与勘查动态简报（M1 手工建树验收）（主体：国内高纯石英）",
+  "corpus": null,
+  "mode": "llm",
+  "subject": "国内高纯石英市场与勘查动态",
+  "focus": "梳理国内高纯石英市场供需、价格与产业动态及国内勘查进展，用简表呈现关键数据。",
+  "rag": [
+    {
+      "need": "corpus_market",
+      "query": "高纯石英 市场 供需 价格",
+      "top_k": 5
+    },
+    {
+      "need": "corpus_explore",
+      "query": "高纯石英 勘查 石英岩 脉石英 矿床",
+      "top_k": 5
+    },
+    {
+      "need": "corpus_tech",
+      "query": "高纯石英砂 提纯 加工 产能 中国",
+      "top_k": 5
+    }
+  ],
+  "web": [
+    {
+      "need": "web_market_2024",
+      "query": "中国高纯石英市场规模 供需 2024",
+      "top_k": 6,
+      "fetch_pages": 3
+    },
+    {
+      "need": "web_price",
+      "query": "高纯石英砂 价格趋�势 2024 2025",
+      "top_k": 6,
+      "fetch_pages": 3
+    },
+    {
+      "need": "web_explore",
+      "query": "中国 高纯石英 勘查进展 新发现 石英矿 2024",
+      "top_k": 6,
+      "fetch_pages": 3
+    },
+    {
+      "need": "web_project",
+      "query": "高纯石英 项目 建设投产 中国 2024 2025",
+      "top_k": 6,
+      "fetch_pages": 3
+    }
+  ],
+  "db": [
+    {
+      "need": "db_drill_summary",
+      "db_ref": "assay_db",
+      "query": "SELECT 孔号, 项目, 期次, 进尺, 见矿段数, 采样日期 FROM drill_summary WHERE 项目 LIKE '%石英%'\n LIMIT 200",
+      "id_column": "孔号",
+      "name_template": "{孔号} 钻探情况",
+      "value_columns": [
+        {
+          "column": "进尺",
+          "key": "footage",
+          "unit": "米"
+        },
+        {
+          "column": "见矿段数",
+          "key": "ore_intersections",
+          "unit": "段"
+        }
+      ],
+      "as_of_column": "采样日期",
+      "table_columns": [
+        "孔号",
+        "项目",
+        "期次",
+        "进尺",
+        "见矿段数",
+        "采样日期"
+      ],
+      "table_id": "drill_summary_quartz"
+    }
+  ],
+  "tables_kept": [],
+  "needs_coverage": [
+    {
+      "need": "综述相关数据",
+      "status": "search"
+    },
+    {
+      "need": "关键数据一览相关数据",
+      "status": "search"
+    }
+  ],
+  "decisions": [],
+  "confirmed": true,
+  "confirmed_at": "2026-09-15T01:15:50"
+}

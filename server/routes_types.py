@@ -1,5 +1,10 @@
 """报告类型管理路由：CRUD / 提取 / 结构编辑与 patch / 回放与试跑 / 版本 / 演示载入。
 
+[deprecated · 冻结] 经典模式（报告类型）UI 已废弃（V2 方案关键决策）。本路由
+后端冻结保留：语义不变、只加注释，作为单测与回归验收（--reuse-data）的载具；
+不再新增功能。阶段三后仅剩 /api/types/load-demo 等被设置页间接使用。
+
+
 目录结构：config/report_types/<id>/
   report.yaml（Spec v2 结构） sources.yaml（名称/状态/参数/数据绑定）
   versions/report/（版本留痕，自动清理保留 20 份） samples/ parsed/ chat.json

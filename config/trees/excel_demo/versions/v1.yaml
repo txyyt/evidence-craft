@@ -1,0 +1,61 @@
+tree:
+  id: excel_demo
+  name: Excel 接入演示
+  subject: GM-1 化验台账
+  status: draft
+  version: 1
+  created_at: '2026-09-15T01:18:02'
+  provenance:
+    kind: manual
+  updated_at: '2026-09-15T01:18:02'
+report_type: excel_demo
+version: 2
+description: 勘查化验台账数据速览（Excel 接入演示）
+writer_role: 地质勘查数据分析师
+title_style: 短语式标题，15~30 字
+title_check: {}
+sections:
+- id: 综述
+  title: 化验成果综述
+  kind: text
+  style: 综述本批样品的化验成果（品位区间、厚度特征），300~450 字，数字必须引用事实切片，注明样品编号。
+  data_needs:
+  - 样品品位
+  origin: agent
+  check: {}
+  heading: 1　化验成果综述
+  inline: false
+  view_slots: []
+  charts:
+  - id: 品位对比图
+    title: 各样品 Au 品位对比
+    type: bar
+    source: table:assay_ledger
+    x: 样品号
+    y:
+    - Au品位
+    unit: g/t
+    note: ''
+    bins: 10
+- id: 化验数据一览
+  title: 化验数据一览
+  kind: table
+  style: 用两三句话解读下表数据（数字以表格为准，不在正文另写表格）。
+  data_needs:
+  - 样品品位
+  origin: agent
+  check: {}
+  heading: 表1　化验数据一览
+  inline: false
+  view_slots: []
+  table: assay_ledger
+  charts: []
+tables:
+- id: assay_ledger
+  renderer: generic_rows
+  columns: []
+writing_rules: []
+forbidden_words: []
+controlled_vocab: {}
+check_rules: []
+industry_keywords: []

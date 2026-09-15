@@ -24,21 +24,26 @@ _GENERATE_SYSTEM = """你是报告结构设计师。用户给出报告需求（�
    简报体可补结论与建议）。
 2. 每节必须有 style（brief：写什么、写多长、什么口径，含字数区间）与
    data_needs（要哪类数据，2~4 个语义短语）。用户没细说的由你补全。
-3. 全文 4~10 节；节 id 用英文小写下划线；heading 用中文式编号（"1　市场供需"，
+3. 全文 4~10 节；节 id 默认就用节标题本身（中文短名，如"市场供需"），仅当标题
+   含斜杠等路径字符时才清洗；heading 用中文式编号（"1　市场供需"，
    摘要/关键词类不编号）。
 4. 图表只用这两类数据源：图 source 取 "facts:rag" 或 "facts:web"（type 用
    bar/line/pie）；表格放顶层 tables，renderer 固定 "facts_rows"，
-   source_prefix 取 "rag" 或 "web"，需要表格的节 table 字段引用其 id。
+   source_prefix 取 "rag" 或 "web"。用户点名"表"必须给三件套：一个 kind=table
+   的节 + tables[] 里的模板 + 该节 table 字段引用模板 id——三者缺一不可，
+   不允许存在没有任何节引用的表格模板。
 5. 视角节（views）须带 view_slots（每槽 id/brief/data_needs）与 n_views。
 6. 需求信息足够时直接给树；只有关键信息缺失（如报告主题完全不明）才反问，
    至多 3 问。文风卡按需求形态选一个：journal_paper / industry_research / exec_brief。
+7. 按需求形态给出基础禁用词 forbidden_words（2~6 个，如口语语气词、夸张词
+   "非常/极其/绝对/众所周知"，学术体另加"我觉得/我们认为"）。
 
 只输出 JSON（二选一）：
 {"kind": "tree", "name": "树名", "subject": "报告主体", "description": "一句话描述",
  "genre": "journal|research|brief", "writer_role": "写作角色", "title_style": "标题要求",
- "writing_rules": ["行文规则", "..."],
+ "writing_rules": ["行文规则", "..."], "forbidden_words": ["禁用词", "..."],
  "style_card": "journal_paper|industry_research|exec_brief",
- "sections": [{"id": "...", "title": "...", "kind": "text",
+ "sections": [{"id": "中文短名或英文小写", "title": "...", "kind": "text",
    "heading": "1　xxx", "style": "写作要求（含字数）", "data_needs": ["..."],
    "origin": "user|agent",
    "charts": [{"id": "...", "title": "...", "type": "bar", "source": "facts:rag", "unit": ""}],
@@ -48,7 +53,9 @@ _GENERATE_SYSTEM = """你是报告结构设计师。用户给出报告需求（�
 
 _EDIT_SYSTEM = """你是报告结构编辑助手。给你当前结构树 JSON 与用户修改意见，
 输出受限操作集 ops。操作类型（严格按此枚举）：
-- {"action": "set_meta", "field": "name|subject|description|writer_role|title_style|genre", "value": "..."}
+- {"action": "set_meta", "field": "name|subject|status|description|writer_role|title_style|genre|style_card|forbidden_words", "value": "..."}
+  （style_card 只能取 null 或 journal_paper/industry_research/exec_brief；
+   forbidden_words 的 value 是字符串数组）
 - {"action": "add_section", "section": {同生成schema的节对象}, "after": "某节id或null(追加末尾)"}
 - {"action": "remove_section", "section_id": "..."}
 - {"action": "update_section", "section_id": "...", "fields": {"title|heading|style|data_needs": 新值}}
@@ -68,6 +75,14 @@ class TreeAgentError(RuntimeError):
     pass
 
 
+def _clean_id(raw: Any, fallback: str = "section") -> str:
+    """id 清洗（C5 中文化）：中文/字母/数字/下划线/连字符保留，其余折成 _；
+    禁路径字符（/ \\ .. 前导点）——id 会成为对话与引用的稳定标识。"""
+    s = re.sub(r"[^\w\u4e00-\u9fff-]+", "_", str(raw or "").strip())[:40]
+    s = s.strip("_") or fallback
+    return s if not s.startswith(".") else fallback
+
+
 def _fmt_messages(messages: list[dict[str, str]]) -> str:
     lines = []
     for m in messages:
@@ -77,11 +92,12 @@ def _fmt_messages(messages: list[dict[str, str]]) -> str:
 
 
 def _clean_section(s: Any) -> dict[str, Any] | None:
-    """LLM 节对象 → 规整节 dict（id 清洗/字段截断/枚举兜底）；不合规返回 None。"""
-    if not isinstance(s, dict) or not s.get("id") or not s.get("title"):
+    """LLM 节对象 → 规整节 dict（id 清洗/字段截断/枚举兜底）；不合规返回 None。
+    id 缺省取标题本身（C5 中文短名），仅当标题含非法字符时清洗。"""
+    if not isinstance(s, dict) or not s.get("title"):
         return None
     kind = s.get("kind") if s.get("kind") in Kind else "text"
-    sec = {"id": re.sub(r"[^a-z0-9_]", "_", str(s["id"]).lower())[:40],
+    sec = {"id": _clean_id(s.get("id") or s["title"]),
            "title": str(s["title"])[:40], "kind": kind}
     for k in ("heading", "subheading", "style", "table"):
         if s.get(k):
@@ -92,8 +108,7 @@ def _clean_section(s: Any) -> dict[str, Any] | None:
     charts = []
     for c in s.get("charts") or []:
         if isinstance(c, dict) and c.get("id") and c.get("source"):
-            charts.append({"id": re.sub(r"[^a-z0-9_]", "_",
-                                        str(c["id"]).lower())[:40],
+            charts.append({"id": _clean_id(c["id"], "chart"),
                            "title": str(c.get("title") or c["id"])[:40],
                            "type": c.get("type") if c.get("type") in
                                    ("bar", "line", "pie", "scatter", "hist")
@@ -106,8 +121,7 @@ def _clean_section(s: Any) -> dict[str, Any] | None:
         slots = []
         for v in s.get("view_slots") or []:
             if isinstance(v, dict) and v.get("id"):
-                slots.append({"id": re.sub(r"[^a-z0-9_]", "_",
-                                           str(v["id"]).lower())[:40],
+                slots.append({"id": _clean_id(v["id"], "v"),
                               "brief": str(v.get("brief") or "")[:120],
                               "data_needs": [str(x)[:40] for x in
                                              (v.get("data_needs") or [])[:6]]})
@@ -119,8 +133,10 @@ def _clean_section(s: Any) -> dict[str, Any] | None:
     return sec
 
 
-def _clean_tree_payload(out: dict[str, Any]) -> dict[str, Any]:
-    """LLM 树草案 → 规整 spec_dict（剥离 kind/questions 等非 Spec 字段）。"""
+def _clean_tree_payload(out: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    """LLM 树草案 → 规整 spec_dict（剥离 kind/questions 等非 Spec 字段）。
+    A3 三件套强校验：表格模板必须有节引用（孤儿自动删除）；表格节引用缺失
+    模板时自动补一个 facts_rows 兜底模板。返回 (spec_dict, meta)。"""
     sections = []
     for s in out.get("sections") or []:
         sec = _clean_section(s)
@@ -129,10 +145,28 @@ def _clean_tree_payload(out: dict[str, Any]) -> dict[str, Any]:
     tables = []
     for t in out.get("tables") or []:
         if isinstance(t, dict) and t.get("id"):
-            tables.append({"id": re.sub(r"[^a-z0-9_]", "_",
-                                        str(t["id"]).lower())[:40],
+            tables.append({"id": _clean_id(t["id"], "table"),
                            "renderer": "facts_rows",
                            "source_prefix": str(t.get("source_prefix") or "rag")[:30]})
+    warnings: list[str] = []
+    referenced = {s["table"] for s in sections
+                  if s.get("kind") == "table" and s.get("table")}
+    # 孤儿模板：无任何节引用 → 删除（模型被迫手写 markdown 表的根源）
+    kept = [t for t in tables if t["id"] in referenced]
+    for t in tables:
+        if t["id"] not in referenced:
+            warnings.append(f"已删除孤儿表格模板「{t['id']}」（没有任何节引用）")
+    # 反向：表格节引用了不存在的模板 → 补兜底模板（否则 SpecV2 校验整体失败）
+    have = {t["id"] for t in kept}
+    for s in sections:
+        if s.get("kind") == "table" and s.get("table") \
+                and s["table"] not in have:
+            kept.append({"id": s["table"], "renderer": "facts_rows",
+                         "source_prefix": "rag"})
+            have.add(s["table"])
+            warnings.append(f"节「{s['title']}」引用的表格模板「{s['table']}」"
+                            "缺失，已自动补 facts_rows 兜底模板")
+    tables = kept
     spec = {
         "report_type": "tree",
         "description": str(out.get("description") or out.get("name") or "报告")[:200],
@@ -143,6 +177,10 @@ def _clean_tree_payload(out: dict[str, Any]) -> dict[str, Any]:
     rules = [str(r)[:120] for r in (out.get("writing_rules") or []) if str(r).strip()]
     if rules:
         spec["writing_rules"] = rules[:8]
+    fwords = [str(w)[:20] for w in (out.get("forbidden_words") or [])
+              if str(w).strip()]
+    if fwords:
+        spec["forbidden_words"] = fwords[:8]
     if tables:
         spec["tables"] = tables
     if out.get("genre") in ("journal", "research", "brief"):
@@ -151,7 +189,7 @@ def _clean_tree_payload(out: dict[str, Any]) -> dict[str, Any]:
         spec["style_card"] = str(out["style_card"])[:40]
     meta = {"name": str(out.get("name") or "对话生成树")[:40],
             "subject": str(out.get("subject") or out.get("name") or "报告主体")[:60]}
-    return spec, meta
+    return spec, meta, warnings
 
 
 def generate(messages: list[dict[str, str]]) -> dict[str, Any]:
@@ -166,7 +204,7 @@ def generate(messages: list[dict[str, str]]) -> dict[str, Any]:
         if not qs:
             raise TreeAgentError("模型未产出树也未给出反问，请换种说法重试")
         return {"kind": "questions", "questions": qs[:3]}
-    spec_dict, meta = _clean_tree_payload(out)
+    spec_dict, meta, warnings = _clean_tree_payload(out)
     if not spec_dict["sections"]:
         raise TreeAgentError("模型产出的树没有任何章节，请补充需求后重试")
     from trees import store as tree_store
@@ -174,7 +212,8 @@ def generate(messages: list[dict[str, str]]) -> dict[str, Any]:
         tree_store.validate_payload(spec_dict)
     except ValueError as e:
         raise TreeAgentError(f"生成的结构不合规：{e}") from e
-    return {"kind": "tree", "spec_dict": spec_dict, "meta": meta}
+    return {"kind": "tree", "spec_dict": spec_dict, "meta": meta,
+            "warnings": warnings}
 
 
 # ---------- edit：受限操作集与应用（纯函数，可单测） ----------
@@ -185,6 +224,12 @@ def _unique_id(base: str, existing: set[str]) -> str:
         tid = f"{base}_{n}"
         n += 1
     return tid
+
+
+# B2：set_meta 字段分流白名单——meta 块字段 vs SpecV2 顶层字段
+_META_FIELDS = ("name", "subject", "status")
+_SPEC_FIELDS = ("description", "writer_role", "title_style", "genre",
+                "style_card")
 
 
 def _apply_ops(spec_dict: dict[str, Any], meta: dict[str, Any],
@@ -201,17 +246,32 @@ def _apply_ops(spec_dict: dict[str, Any], meta: dict[str, Any],
         if not isinstance(op, dict):
             continue
         action = op.get("action")
-        if action == "set_meta" and op.get("field") in (
-                "name", "subject", "description", "writer_role",
-                "title_style", "genre"):
+        if action == "set_meta" and op.get("field") in _META_FIELDS:
             meta[op["field"]] = str(op.get("value") or "")[:200]
             applied.append(f"修改{op['field']}为「{meta[op['field']]}」")
+        elif action == "set_meta" and op.get("field") in _SPEC_FIELDS:
+            # B2：SpecV2 字段写顶层（写进 meta 块会被 SpecV2 静默忽略）
+            spec_dict[op["field"]] = str(op.get("value") or "")[:200]
+            applied.append(f"修改{op['field']}为「{spec_dict[op['field']]}」")
+        elif action == "set_meta" and op.get("field") == "forbidden_words":
+            words = [str(w)[:20] for w in (op.get("value") or [])
+                     if str(w).strip()] if isinstance(op.get("value"),
+                                                      list) else []
+            spec_dict["forbidden_words"] = words[:8]
+            applied.append("更新禁用词表（" + "、".join(words[:8]) + "）"
+                           if words else "清空禁用词表")
         elif action == "add_section" and isinstance(op.get("section"), dict):
             sec = dict(op["section"])
-            sec["id"] = _unique_id(re.sub(r"[^a-z0-9_]", "_",
-                                          str(sec.get("id") or "section").lower())[:40],
-                                   {s.get("id") for s in sections})
-            sec.setdefault("title", sec["id"])
+            cleaned = _clean_section(sec)     # 归一化（id 缺省取标题）
+            if cleaned is None:
+                continue
+            sec = cleaned
+            existing_titles = {s.get("title") for s in sections}
+            if sec["title"] in existing_titles:
+                # A2：同标题拒绝（重复节会让反馈定位与渲染歧义）
+                applied.append(f"已存在同名节「{sec['title']}」，未重复添加")
+                continue
+            sec["id"] = _unique_id(sec["id"], {s.get("id") for s in sections})
             sec.setdefault("kind", "text")
             sec["origin"] = "user"
             idx = len(sections)
@@ -244,11 +304,11 @@ def _apply_ops(spec_dict: dict[str, Any], meta: dict[str, Any],
                 applied.append(f"移动节「{op['section_id']}」")
         elif action == "add_chart" and isinstance(op.get("chart"), dict) \
                 and _find(op.get("section_id")):
-            sec = _find(op["section_id"])
+            sec = _find(op.get("section_id"))
             c = op["chart"]
             charts = sec.setdefault("charts", [])
-            cid = _unique_id(re.sub(r"[^a-z0-9_]", "_",
-                                    str(c.get("id") or "chart").lower())[:40],
+            cid = _unique_id(_clean_id(c.get("id") or c.get("title") or "chart",
+                                       "chart"),
                              {x.get("id") for x in charts})
             charts.append({"id": cid, "title": str(c.get("title") or cid)[:40],
                            "type": c.get("type") if c.get("type") in
@@ -264,8 +324,10 @@ def _apply_ops(spec_dict: dict[str, Any], meta: dict[str, Any],
     return applied, meta
 
 
-def edit(tree_id: str, message: str) -> dict[str, Any]:
-    """编辑对话：读当前树（D5）→ NL → ops → 应用 → 保存（actor=agent）。"""
+def edit(tree_id: str, message: str,
+         base_version: int | None = None) -> dict[str, Any]:
+    """编辑对话：读当前树（D5）→ NL → ops → 应用 → 保存（actor=agent）。
+    base_version（B5）：给出时乐观锁校验，冲突抛 trees.store.TreeConflict。"""
     from trees import store as tree_store
     from trees.lint import lint as tree_lint_fn
     loaded = tree_store.load_spec_dict(tree_id)
@@ -288,7 +350,8 @@ def edit(tree_id: str, message: str) -> dict[str, Any]:
                                   {k: meta.get(k) for k in
                                    ("name", "subject", "status")},
                                   actor="agent", summary=summary,
-                                  op={"action": "chat_edit", "ops": ops})
+                                  op={"action": "chat_edit", "ops": ops},
+                                  base_version=base_version)
     return {"applied": applied, "summary": summary, "ops": ops,
             "version": result["meta"]["version"],
             "fingerprint": result["fingerprint"],

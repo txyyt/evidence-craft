@@ -1,0 +1,178 @@
+{
+  "created_at": "2026-09-15T00:51:26",
+  "intent": "以期刊综述口吻梳理国内萤石资源禀赋、供需、勘查进展与问题建议的中等篇幅综述报告。（主体：国内萤石（氟化工原料）资源勘查与开发动态）",
+  "corpus": null,
+  "mode": "llm",
+  "subject": "国内萤石资源勘查与开发动态综述",
+  "focus": "以期刊综述口吻梳理国内萤石资源禀赋（总量、品位、矿床类型、分区分布）、市场供需、新一轮找矿行动下的勘查进展、提纯技术与环保储运约束，并提出问题与对策。",
+  "rag": [
+    {
+      "need": "corpus_resource_endowment",
+      "query": "中国萤石 资源储量 矿床类型 单一型 伴生型 品位",
+      "top_k": 6
+    },
+    {
+      "need": "corpus_province_distribution",
+      "query": "萤石 资源分布 浙江 内蒙古 福建 湖南 主要省份",
+      "top_k": 5
+    },
+    {
+      "need": "corpus_supply_demand",
+      "query": "萤石 产量 进口量 氟化工 冶金 建材 消费结构 供需",
+      "top_k": 6
+    },
+    {
+      "need": "corpus_exploration_progress",
+      "query": "萤石 地质勘查 找矿突破 新发现 矿点 新一轮找矿行动",
+      "top_k": 6
+    },
+    {
+      "need": "corpus_purification_tech",
+      "query": "萤石 提纯 浮选 重选 精矿 CaF2 选矿工艺",
+      "top_k": 5
+    },
+    {
+      "need": "corpus_environment_storage",
+      "query": "萤石 选矿 废水处理 尾矿 储存 运输 环保 要求",
+      "top_k": 5
+    }
+  ],
+  "web": [
+    {
+      "need": "web_reserves_recent",
+      "query": "2023 2024 中国萤石 查明资源储量 最新数据",
+      "top_k": 6,
+      "fetch_pages": 3
+    },
+    {
+      "need": "web_production_import",
+      "query": "2023 2024 萤石 产量 进口量 价格 趋势 中国",
+      "top_k": 6,
+      "fetch_pages": 3
+    },
+    {
+      "need": "web_fluorochemical_capacity",
+      "query": "氟化工 产能布局 萤石 下游消费 氢氟酸 2024",
+      "top_k": 6,
+      "fetch_pages": 3
+    },
+    {
+      "need": "web_new_deposits",
+      "query": "新一轮找矿突破战略行动 萤石 新发现 矿点 2023 2024 勘查投入",
+      "top_k": 6,
+      "fetch_pages": 3
+    },
+    {
+      "need": "web_policy_expert",
+      "query": "萤石 资源开发 政策 规划 专家综述 问题 建议",
+      "top_k": 6,
+      "fetch_pages": 3
+    },
+    {
+      "need": "web_env_storage",
+      "query": "萤石 选矿废水 排放标准 回用 尾矿库安全 精矿 储存运输 要求",
+      "top_k": 6,
+      "fetch_pages": 3
+    }
+  ],
+  "db": [],
+  "tables_kept": [],
+  "needs_coverage": [
+    {
+      "need": "全国萤石资源量",
+      "status": "covered"
+    },
+    {
+      "need": "近年查明储量变化",
+      "status": "search"
+    },
+    {
+      "need": "勘查新增矿点概况",
+      "status": "covered"
+    },
+    {
+      "need": "全国萤石资源储量",
+      "status": "covered"
+    },
+    {
+      "need": "主要省份分布数据",
+      "status": "covered"
+    },
+    {
+      "need": "矿床类型与品位",
+      "status": "covered"
+    },
+    {
+      "need": "开发利用查明储量",
+      "status": "search"
+    },
+    {
+      "need": "近年萤石产量与进口量",
+      "status": "search"
+    },
+    {
+      "need": "下游各领域消费量占比",
+      "status": "covered"
+    },
+    {
+      "need": "供需平衡与价格趋势",
+      "status": "search"
+    },
+    {
+      "need": "氟化工产能布局",
+      "status": "search"
+    },
+    {
+      "need": "近年新发现萤石矿点清单",
+      "status": "search"
+    },
+    {
+      "need": "勘查投入与找矿突破成果",
+      "status": "search"
+    },
+    {
+      "need": "矿点规模（推断资源量）",
+      "status": "covered"
+    },
+    {
+      "need": "提纯工艺",
+      "status": "covered"
+    },
+    {
+      "need": "行业共性问题素材",
+      "status": "search"
+    },
+    {
+      "need": "政策文件与规划要求",
+      "status": "search"
+    },
+    {
+      "need": "专家综述观点",
+      "status": "search"
+    },
+    {
+      "need": "选矿废水处理要求",
+      "status": "covered"
+    },
+    {
+      "need": "尾矿处置与综合利用政策",
+      "status": "qualitative",
+      "decision": "qualitative"
+    },
+    {
+      "need": "萤石 储存 运输 要求",
+      "status": "covered"
+    },
+    {
+      "need": "CaF₂ 精矿 潮解 储存条件",
+      "status": "covered"
+    }
+  ],
+  "decisions": [
+    {
+      "need": "尾矿处置与综合利用政策",
+      "decision": "qualitative",
+      "ts": "2026-09-15T00:51:59"
+    }
+  ]
+}

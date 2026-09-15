@@ -1,0 +1,120 @@
+{
+  "created_at": "2026-09-15T01:18:02",
+  "intent": "汇总 GM-1 化验台账成果",
+  "corpus": null,
+  "mode": "llm",
+  "file_bindings": [
+    {
+      "need": "xlsx_assay_ledger",
+      "adapter": "xlsx_table",
+      "params": {
+        "path": "D:\\evidence-craft\\data\\geology_demo\\assay_ledger.xlsx",
+        "header_row": 1,
+        "id_prefix": "assay_ledger",
+        "id_column": "样品号",
+        "name_template": "{样品号}",
+        "value_columns": [
+          {
+            "column": "Au品位",
+            "key": "Au品位",
+            "unit": ""
+          },
+          {
+            "column": "矿段厚度",
+            "key": "矿段厚度",
+            "unit": ""
+          }
+        ],
+        "table_columns": [
+          "样品号",
+          "孔号",
+          "项目",
+          "Au品位",
+          "矿段厚度",
+          "采样日期"
+        ],
+        "table_id": "assay_ledger"
+      }
+    }
+  ],
+  "files": [
+    {
+      "need": "xlsx_assay_ledger",
+      "file": "assay_ledger.xlsx",
+      "table_id": "assay_ledger",
+      "headers": [
+        "样品号",
+        "孔号",
+        "项目",
+        "Au品位",
+        "矿段厚度",
+        "采样日期"
+      ],
+      "n_value_columns": 2
+    }
+  ],
+  "subject": "GM-1 化验台账成果汇总",
+  "focus": "汇总 GM-1 项目本批样品化验成果，综述Au品位区间与矿段厚度特征，并附化验数据一览表。",
+  "rag": [
+    {
+      "need": "corpus_assay_summary",
+      "query": "GM-1 化验 台账 Au品位 品位区间 矿段厚度",
+      "top_k": 5
+    },
+    {
+      "need": "corpus_sampling_records",
+      "query": "GM-1 钻孔 采样 样品号 化验结果",
+      "top_k": 5
+    },
+    {
+      "need": "corpus_thickness_stats",
+      "query": "GM-1 见矿段 厚度 统计 平均厚度",
+      "top_k": 5
+    }
+  ],
+  "web": [],
+  "db": [
+    {
+      "need": "db_drill_summary",
+      "db_ref": "assay_db",
+      "query": "SELECT 孔号, 项目, 期次, 进尺, 见矿段数, 采样日期 FROM drill_summary WHERE 项目 = :project\n LIMIT 200",
+      "id_column": "孔号",
+      "name_template": "{孔号} 钻孔见矿情况",
+      "value_columns": [
+        {
+          "column": "进尺",
+          "key": "footage",
+          "unit": "米"
+        },
+        {
+          "column": "见矿段数",
+          "key": "ore_interval_count",
+          "unit": "段"
+        }
+      ],
+      "query_params": {
+        "project": "$project"
+      },
+      "as_of_column": "采样日期",
+      "table_columns": [
+        "孔号",
+        "项目",
+        "期次",
+        "进尺",
+        "见矿段数",
+        "采样日期"
+      ],
+      "table_id": "assay_drill_summary"
+    }
+  ],
+  "tables_kept": [],
+  "needs_coverage": [
+    {
+      "need": "样品品位",
+      "status": "covered"
+    }
+  ],
+  "decisions": [],
+  "confirmed": true,
+  "confirmed_at": "2026-09-15T01:18:09"
+}

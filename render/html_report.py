@@ -12,7 +12,7 @@ from datetime import datetime
 from typing import Any
 
 from pipeline.sections import render_table_sec
-from render.common import md_table_rows
+from render.common import md_table_rows, split_md_blocks
 from template_factory.schema import SpecV2
 
 # 通识数值标记〔x〕→ x（终稿干净；限量由 validate 把关）
@@ -198,10 +198,21 @@ def _section_html(sec: Any, doc: dict[str, Any], written: list[dict[str, Any]],
         t = texts.get(sec.id)
         if not t:
             return ""
-        paras = "\n".join(f"  <p>{_esc(p.strip())}</p>"
-                          for p in t["body"].split("\n") if p.strip())
+        # A1：正文分块——手写 markdown 表格块渲染成真表格，其余行按段落
+        parts = []
+        for bkind, btext in split_md_blocks(t["body"]):
+            if bkind == "table":
+                tbl_html, tbl_note = _md_table_html(btext)
+                if tbl_html:
+                    parts.append(tbl_html)
+                    if tbl_note:
+                        parts.append(tbl_note)
+                    continue
+            parts.append("\n".join(f"  <p>{_esc(p.strip())}</p>"
+                                   for p in btext.split("\n") if p.strip()))
         src = _sources_html(t.get("cited_fact_ids"), facts_by_id)
-        return f"{head}{paras}\n{src}{_charts_html(charts.get(sec.id))}"
+        body_html = "\n".join(parts)
+        return f"{head}{body_html}\n{src}{_charts_html(charts.get(sec.id))}"
     if sec.kind == "figures":
         jobs = charts.get(sec.id) or []
         if not jobs:

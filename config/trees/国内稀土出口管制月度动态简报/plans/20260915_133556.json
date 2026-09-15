@@ -1,0 +1,186 @@
+{
+  "created_at": "2026-09-15T13:35:39",
+  "intent": "按月梳理国内稀土出口管制政策动向、市场与价格变化，并给出克制的结论与建议。（主体：国内稀土出口管制政策月度动态）",
+  "corpus": null,
+  "mode": "llm",
+  "file_bindings": [
+    {
+      "need": "xlsx_assay_ledger",
+      "adapter": "xlsx_table",
+      "params": {
+        "path": "data\\geology_demo\\assay_ledger.xlsx",
+        "header_row": 1,
+        "id_prefix": "assay_ledger",
+        "id_column": "样品号",
+        "name_template": "{样品号}",
+        "value_columns": [
+          {
+            "column": "Au品位",
+            "key": "Au品位",
+            "unit": ""
+          },
+          {
+            "column": "矿段厚度",
+            "key": "矿段厚度",
+            "unit": ""
+          }
+        ],
+        "table_columns": [
+          "样品号",
+          "孔号",
+          "项目",
+          "Au品位",
+          "矿段厚度",
+          "采样日期"
+        ],
+        "table_id": "assay_ledger"
+      }
+    }
+  ],
+  "files": [
+    {
+      "need": "xlsx_assay_ledger",
+      "file": "assay_ledger.xlsx",
+      "table_id": "assay_ledger",
+      "headers": [
+        "样品号",
+        "孔号",
+        "项目",
+        "Au品位",
+        "矿段厚度",
+        "采样日期"
+      ],
+      "n_value_columns": 2
+    }
+  ],
+  "subject": "国内稀土出口管制政策月度动态",
+  "focus": "按月追踪商务部、海关总署等稀土出口管制政策发布与许可调整，结合氧化镨钕等价格走势、出口量及海外市场反应，并涵盖环保监管动态，形成克制的结论与建议。",
+  "rag": [
+    {
+      "need": "corpus_policy_export_control",
+      "query": "稀土 出口管制 商务部 公告 许可 2025",
+      "top_k": 5
+    },
+    {
+      "need": "corpus_policy_customs",
+      "query": "海关总署 稀土 出口 许可证 管制物项 2025",
+      "top_k": 5
+    },
+    {
+      "need": "corpus_price_prnd",
+      "query": "氧化镨钕 价格 走势 稀土 月度 2025",
+      "top_k": 5
+    },
+    {
+      "need": "corpus_export_volume",
+      "query": "稀土 出口量 出口数据 统计 2025",
+      "top_k": 5
+    },
+    {
+      "need": "corpus_env_policy",
+      "query": "稀土 开采 冶炼分离 环保 生态环境部 工信部 监管 2025",
+      "top_k": 5
+    }
+  ],
+  "web": [
+    {
+      "need": "web_policy_month",
+      "query": "本月 商务部 稀土出口管制 公告 发布 调整 2025年",
+      "top_k": 6,
+      "fetch_pages": 3
+    },
+    {
+      "need": "web_license_process",
+      "query": "稀土出口许可证 审批流程 变化 管制物项 技术参数 2025",
+      "top_k": 6,
+      "fetch_pages": 3
+    },
+    {
+      "need": "web_price_market",
+      "query": "氧化镨钕 氧化镝 氧化铽 价格 本月 走势 2025",
+      "top_k": 6,
+      "fetch_pages": 3
+    },
+    {
+      "need": "web_overseas_reaction",
+      "query": "海外市场 稀土 供需 替代 企业应对 出口管制 反应 2025",
+      "top_k": 6,
+      "fetch_pages": 3
+    },
+    {
+      "need": "web_export_license_data",
+      "query": "中国 稀土出口量 月度 数据 海关统计 出口许可 2025",
+      "top_k": 6,
+      "fetch_pages": 3
+    },
+    {
+      "need": "web_env_supervision",
+      "query": "生态环境部 稀土 矿山 环保督察 整治 行动 冶炼 2025",
+      "top_k": 6,
+      "fetch_pages": 3
+    }
+  ],
+  "db": [],
+  "tables_kept": [],
+  "needs_coverage": [
+    {
+      "need": "本月稀土出口管制新政策",
+      "status": "search"
+    },
+    {
+      "need": "政策发布机构与发文日期",
+      "status": "covered"
+    },
+    {
+      "need": "管制物项与技术参数调整",
+      "status": "search"
+    },
+    {
+      "need": "许可与审批流程变化",
+      "status": "search"
+    },
+    {
+      "need": "主要稀土产品月度价格",
+      "status": "covered"
+    },
+    {
+      "need": "稀土出口量与出口许可数据",
+      "status": "search"
+    },
+    {
+      "need": "海外供需与替代动态",
+      "status": "search"
+    },
+    {
+      "need": "行业企业应对动向",
+      "status": "search"
+    },
+    {
+      "need": "本月稀土行业环保监管新政策",
+      "status": "covered"
+    },
+    {
+      "need": "矿山开采与冶炼环保要求",
+      "status": "covered"
+    },
+    {
+      "need": "环保督察与整治行动",
+      "status": "search"
+    },
+    {
+      "need": "政策走向研判要点",
+      "status": "covered"
+    },
+    {
+      "need": "市场风险关注点",
+      "status": "covered"
+    },
+    {
+      "need": "合规与供应链建议依据",
+      "status": "covered"
+    }
+  ],
+  "decisions": [],
+  "confirmed": true,
+  "confirmed_at": "2026-09-15T13:36:37"
+}

@@ -1,0 +1,136 @@
+tree:
+  id: 稀土月报结构树
+  name: 稀土月报结构树
+  subject: 国内稀土出口管制与产业动态月度报告
+  status: draft
+  version: 1
+  created_at: '2026-09-15T13:31:49'
+  provenance:
+    kind: dialogue
+  updated_at: '2026-09-15T13:31:49'
+report_type: tree
+version: 2
+description: 围绕稀土出口管制政策、市场供需价格、海外替代进展的月度跟踪研报，含风险提示与结论建议。
+writer_role: 行业研究员
+title_style: 《稀土月报》式标题：主题+月度期间，克制陈述，不使用夸张措辞
+title_check: {}
+sections:
+- id: 核心观点
+  title: 核心观点
+  kind: text
+  style: 3~5 条要点式陈述，每条 40~80 字，覆盖政策、价格、替代、风险四条线，共约 400 字。
+  data_needs:
+  - 本月政策文件要点
+  - 主要稀土产品价格月度变动
+  - 海外项目进展摘要
+  - 供需数据关键数字
+  origin: agent
+  check: {}
+  heading: 核心观点
+  inline: false
+  view_slots: []
+  charts: []
+- id: 政策动向
+  title: 政策动向：出口管制最新规定
+  kind: text
+  style: 梳理本月国内稀土出口管制新规与配套措施（商务部、海关公告等），逐条说明文号、生效时间、管制范围变化；对比上月差异。约 400~600 字，不评论动机。
+  data_needs:
+  - 本月出口管制公告全文要素
+  - 管制清单稀土条目变化
+  - 许可/审批流程调整
+  - 外媒或外方官方回应口径
+  origin: user
+  check: {}
+  heading: 1　政策动向
+  inline: false
+  view_slots: []
+  charts: []
+- id: 市场供需
+  title: 市场供需与价格
+  kind: text
+  style: 陈述氧化镨钕、氧化镝、氧化铽等主力品种本月价格区间与环比，国内开工/供应端情况，下游（磁材、新能源）需求侧变化，出口量数据（如有官方口径）。约 500~700
+    字，数据列表化。
+  data_needs:
+  - 主要稀土氧化物月度价格序列
+  - 国内矿产量与冶炼分离指标
+  - 出口许可量/实际出口量
+  - 下游磁材与新能源需求指标
+  origin: user
+  check: {}
+  heading: 2　市场供需与价格
+  inline: false
+  view_slots: []
+  charts:
+  - id: price_trend
+    title: 主要稀土产品近12个月价格走势
+    type: line
+    source: facts:web
+    y: []
+    unit: 万元/吨
+    note: ''
+    bins: 10
+- id: 海外替代
+  title: 海外替代进展
+  kind: text
+  style: 分区域（美、澳、欧、日、东南亚/非洲）跟踪海外稀土矿与磁材项目的本月进展：投产、扩产、融资、技术路线（含无稀土磁体研发）。只陈述事实与公开时间表，不评估成败。约
+    450~650 字。
+  data_needs:
+  - 海外稀土项目月度进度公告
+  - 各国政府补贴/立法动态
+  - 替代技术研发里程碑
+  - 海外项目设计产能数据
+  origin: user
+  check: {}
+  heading: 3　海外替代进展
+  inline: false
+  view_slots: []
+  charts: []
+- id: 风险提示
+  title: 风险提示
+  kind: text
+  style: 3~5 条风险逐条列出，每条含触发条件与可能影响，合计约 300~400 字；使用中性措辞，区分短期与中期。
+  data_needs:
+  - 政策进一步收紧/放松的信号
+  - 海外产能超预期释放信息
+  - 价格异常波动数据
+  - 下游需求走弱迹象
+  origin: user
+  check: {}
+  heading: 4　风险提示
+  inline: false
+  view_slots: []
+  charts: []
+- id: 结论与建议
+  title: 结论与建议
+  kind: text
+  style: 先 2~3 段小结本月态势（合计约 300 字），再给 3~4 条可操作建议（面向产业相关方），每条 50~80 字，建议须与上文事实关联。
+  data_needs:
+  - 本月各节核心事实汇总
+  - 价格与政策关联证据
+  - 供需缺口/过剩测算
+  - 外方依赖度数据
+  origin: user
+  check: {}
+  heading: 5　结论与建议
+  inline: false
+  view_slots: []
+  charts: []
+tables: []
+writing_rules:
+- 克制陈述，只写可核实事实与数据，避免形容词堆砌
+- 全文 2000~3000 字，各节按 style 给出的字数区间控制
+- 数据须标注口径（source、统计期）
+- 不预测确定性结论，措辞用‘可能/或将’
+- 段落短，每段不超过 5 句
+forbidden_words:
+- 非常
+- 极其
+- 众所周知
+- 绝对
+- 我觉得
+- 毫无疑问
+controlled_vocab: {}
+check_rules: []
+industry_keywords: []
+style_card: industry_research
+genre: research

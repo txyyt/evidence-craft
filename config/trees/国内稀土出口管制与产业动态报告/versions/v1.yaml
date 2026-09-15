@@ -1,0 +1,134 @@
+tree:
+  id: 国内稀土出口管制与产业动态报告
+  name: 国内稀土出口管制与产业动态报告
+  subject: 国内稀土出口管制与产业动态
+  status: draft
+  version: 1
+  created_at: '2026-09-15T01:54:41'
+  provenance:
+    kind: dialogue
+  updated_at: '2026-09-15T01:54:41'
+report_type: tree
+version: 2
+description: 围绕国内稀土出口管制政策、出口量价变化、重点企业动向及影响的客观分析报告，约3000字。
+writer_role: 行业研究员
+title_style: 简洁客观，避免渲染性词汇，可用'稀土出口管制与产业动态分析'类偏正式标题
+title_check: {}
+sections:
+- id: 核心观点
+  title: 核心观点
+  kind: text
+  style: 提炼全文3~5条核心判断，每条1~2句话，突出政策变化、出口走势与企业动向的关键结论；字数200~300字
+  data_needs:
+  - 稀土出口管制政策要点
+  - 近期出口量价走势
+  - 重点企业经营动态
+  origin: agent
+  check: {}
+  heading: 核心观点
+  inline: false
+  view_slots: []
+  charts: []
+- id: 最新政策动态
+  title: 最新政策动态
+  kind: text
+  style: 梳理商务部、海关总署等部门近一年稀土出口管制相关政策（管制清单调整、许可证管理、追溯体系等），按时间线陈述；每条政策说明发布时间、主体、核心内容与适用范围；字数600~700字
+  data_needs:
+  - 稀土出口管制政策文件
+  - 管制物项清单
+  - 许可证与监管措施
+  - 国际规则相关表态
+  origin: user
+  check: {}
+  heading: 1　最新政策动态
+  inline: false
+  view_slots: []
+  charts: []
+- id: 出口量价数据
+  title: 出口量价数据
+  kind: table
+  style: 以表格呈现稀土及稀土氧化物、稀土永磁材料等主要品类的出口数量与出口金额（按月度或季度口径），并对数据做200~300字简要解读，指出量价变化方向与可能的政策关联；字数合计500~600字
+  data_needs:
+  - 稀土出口数量数据
+  - 稀土出口金额数据
+  - 出口平均单价
+  - 分品类/分月度口径
+  origin: user
+  check: {}
+  heading: 2　出口量价数据
+  inline: false
+  view_slots: []
+  table: export_price_volume
+  charts:
+  - id: export_volume_trend
+    title: 稀土出口量月度走势
+    type: line
+    source: facts:web
+    y: []
+    unit: 吨
+    note: ''
+    bins: 10
+- id: 重点企业动向
+  title: 重点企业动向
+  kind: text
+  style: 选取中国稀土集团、北方稀土、盛和资源等3~4家代表性企业，陈述其近期的产能调整、配额变化、技术或投资项目、海外布局等公开动向；避免评价性语言，仅列事实；字数500~600字
+  data_needs:
+  - 重点企业公告与经营数据
+  - 产能与项目动态
+  - 行业整合动态
+  origin: user
+  check: {}
+  heading: 3　重点企业动向
+  inline: false
+  view_slots: []
+  charts: []
+- id: 影响研判
+  title: 影响研判
+  kind: text
+  style: 分出口、国内产业链、全球供需三个层面分析政策与量价变化的影响，对下游（永磁、新能源）与海外买家的影响分别说明；判断需与前三节数据呼应，标注不确定性；字数700~800字
+  data_needs:
+  - 下游需求与价格传导
+  - 海外进口国替代供应情况
+  - 全球稀土供需格局
+  origin: user
+  check: {}
+  heading: 4　影响研判
+  inline: false
+  view_slots: []
+  charts: []
+- id: 风险提示
+  title: 风险提示
+  kind: text
+  style: 提示政策调整、数据口径变化、海外替代供应、价格波动等3~4项主要风险，每项1~2句话；字数150~250字
+  data_needs:
+  - 政策不确定性因素
+  - 海外供应风险
+  - 价格波动风险
+  origin: agent
+  check: {}
+  heading: 风险提示
+  inline: false
+  view_slots: []
+  charts: []
+tables:
+- id: export_price_volume
+  renderer: facts_rows
+  columns: []
+  source_prefix: web
+writing_rules:
+- 口吻客观克制，以数据和事实为依据，避免情绪化与夸张表述
+- 政策与数据均注明时间口径与来源
+- 每节围绕核心论点展开，不做无依据推测，定性判断需有数据或政策支撑
+- 全文字数控制在3000字左右（±10%）
+forbidden_words:
+- 非常
+- 极其
+- 绝对
+- 众所周知
+- 震惊
+- 爆发式
+controlled_vocab: {}
+check_rules: []
+industry_keywords: []
+style_card: industry_research
+genre: research

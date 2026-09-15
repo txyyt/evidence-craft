@@ -1,0 +1,111 @@
+tree:
+  id: industry_review3
+  name: 行业综述
+  subject: 标准行业综述结构：摘要、供需、竞争格局、核心观点与风险提示，适合任意行业替换主体。
+  status: draft
+  version: 1
+  created_at: '2026-09-15T10:09:36'
+  provenance:
+    kind: template
+    template: tpl_industry_review
+  updated_at: '2026-09-15T10:09:36'
+report_type: tpl_industry_review
+version: 2
+description: 标准行业综述结构：摘要、供需、竞争格局、核心观点与风险提示，适合任意行业替换主体。
+writer_role: 资深行业研究员
+title_style: 短语式标题，15~30 字，概括行业与视角
+title_check: {}
+sections:
+- id: 摘要
+  title: 摘要
+  kind: text
+  style: 概括行业现状、核心结论与建议要点，250~350 字，口径为近年公开数据。
+  data_needs:
+  - 行业规模与增速
+  - 核心结论要点
+  origin: agent
+  check: {}
+  heading: 摘要
+  inline: false
+  view_slots: []
+  charts: []
+- id: 市场供需
+  title: 市场供需
+  kind: text
+  style: 分供给端与需求端论述市场平衡与价格走势，600~1000 字，数据引用注明年份口径。
+  data_needs:
+  - 近年产量与进口量
+  - 下游消费结构
+  - 价格趋势
+  origin: agent
+  check: {}
+  heading: 1　市场供需
+  inline: false
+  view_slots: []
+  charts: []
+- id: 竞争格局
+  title: 竞争格局
+  kind: text
+  style: 梳理头部企业产能与份额、新进入者与退出情况，400~700 字。
+  data_needs:
+  - 头部企业产能
+  - 市场集中度
+  origin: agent
+  check: {}
+  heading: 2　竞争格局
+  inline: false
+  view_slots: []
+  charts: []
+- id: 核心观点
+  title: 核心观点
+  kind: views
+  data_needs: []
+  origin: agent
+  check: {}
+  heading: 3　核心观点
+  inline: false
+  n_views: 2
+  view_slots:
+  - id: v1
+    brief: 供需格局判断：紧缺还是过剩，拐点在哪
+    data_needs:
+    - 供需平衡数据
+    fallback: []
+  - id: v2
+    brief: 价格与盈利趋势判断及依据
+    data_needs:
+    - 价格趋势
+    fallback: []
+  view_style: 每条观点 80~200 字，判断句开头，给依据。
+  view_numbering: '3'
+  charts: []
+- id: 风险提示
+  title: 风险提示
+  kind: risk
+  style: 3~5 条风险，用分号分隔成一行，每条以"风险"结尾。
+  data_needs:
+  - 政策与贸易风险
+  origin: agent
+  check:
+    count:
+    - 3
+    - 5
+    item_suffix: 风险
+    min_shaped: 2
+  heading: 4　风险提示
+  inline: false
+  view_slots: []
+  strategy: enumerate
+  charts: []
+tables:
+- id: 关键事实
+  renderer: facts_rows
+  columns: []
+  source_prefix: rag
+writing_rules: []
+forbidden_words: []
+controlled_vocab: {}
+check_rules: []
+industry_keywords: []
+style_card: industry_research
+genre: research

@@ -1,0 +1,172 @@
+{
+  "created_at": "2026-09-15T10:27:48",
+  "intent": "面向高纯石英产业的研究报告，覆盖产业概况、供需、技术、竞争与展望，图表与量化数据齐全，强调近三年最新时效性。（主体：中国高纯石英砂行业的供需格局、技术进展、竞争格局与投资前景）",
+  "corpus": null,
+  "mode": "llm",
+  "subject": "中国高纯石英砂行业研究",
+  "focus": "中国高纯石英砂供需格局、提纯技术进展、国内外竞争格局与价格走势复盘及2026—2030投资前景，侧重近三年量化数据。",
+  "rag": [
+    {
+      "need": "corpus_industry_overview",
+      "query": "高纯石英 定义 纯度分级 产业链 上游矿石 中游提纯 下游光伏坩埚 半导体",
+      "top_k": 6
+    },
+    {
+      "need": "corpus_supply_demand",
+      "query": "高纯石英砂 产能 产量 供需 进口依存度 出口",
+      "top_k": 6
+    },
+    {
+      "need": "corpus_technology",
+      "query": "石英 提纯工艺 氯化焙烧 物理提纯 斯普鲁斯派恩 石英矿资源",
+      "top_k": 5
+    },
+    {
+      "need": "corpus_competition",
+      "query": "石英股份 尤尼明 Sibelco TQC 高纯石英 市场份额 竞争格局",
+      "top_k": 6
+    },
+    {
+      "need": "corpus_price",
+      "query": "高纯石英砂 价格 内层砂 中层砂 外层砂 涨价 回落",
+      "top_k": 5
+    }
+  ],
+  "web": [
+    {
+      "need": "web_capacity_output",
+      "query": "2023 2024 2025 中国高纯石英砂 产能 产量 统计",
+      "top_k": 6,
+      "fetch_pages": 3
+    },
+    {
+      "need": "web_import_export",
+      "query": "2023 2024 2025 高纯石英砂 进出口数据 海关 进口依存度",
+      "top_k": 6,
+      "fetch_pages": 3
+    },
+    {
+      "need": "web_company_news",
+      "query": "2025 2026 石英股份 凯德石英 菲利华 高纯石英 扩产 半导体认证 最新动态",
+      "top_k": 6,
+      "fetch_pages": 3
+    },
+    {
+      "need": "web_price_2026",
+      "query": "2026年 高纯石英砂 内层砂 中层砂 报价 价格走势",
+      "top_k": 6,
+      "fetch_pages": 3
+    },
+    {
+      "need": "web_forecast_2030",
+      "query": "高纯石英砂 2030 需求预测 供需预测 光伏 半导体 国产替代",
+      "top_k": 6,
+      "fetch_pages": 3
+    },
+    {
+      "need": "web_purity_standard",
+      "query": "高纯石英 纯度等级 标准 半导体级 光伏级 技术指标 内层砂要求",
+      "top_k": 6,
+      "fetch_pages": 3
+    }
+  ],
+  "db": [],
+  "tables_kept": [],
+  "needs_coverage": [
+    {
+      "need": "高纯石英产能规模",
+      "status": "search"
+    },
+    {
+      "need": "光伏与半导体需求增速",
+      "status": "search"
+    },
+    {
+      "need": "进口依存度",
+      "status": "search"
+    },
+    {
+      "need": "高纯石英纯度分级标准",
+      "status": "search"
+    },
+    {
+      "need": "上下游产业链结构",
+      "status": "covered"
+    },
+    {
+      "need": "主要应用领域构成",
+      "status": "search"
+    },
+    {
+      "need": "国内高纯石英产能与产量",
+      "status": "search"
+    },
+    {
+      "need": "光伏坩埚用砂需求量",
+      "status": "search"
+    },
+    {
+      "need": "高纯石英进出口数据",
+      "status": "search"
+    },
+    {
+      "need": "提纯工艺技术水平对比",
+      "status": "covered"
+    },
+    {
+      "need": "优质石英矿资源分布",
+      "status": "covered"
+    },
+    {
+      "need": "内层砂技术指标要求",
+      "status": "search"
+    },
+    {
+      "need": "全球高纯石英企业市场份额",
+      "status": "covered"
+    },
+    {
+      "need": "国内企业产能与产品等级",
+      "status": "covered"
+    },
+    {
+      "need": "重点企业2025—2026最新动态",
+      "status": "search"
+    },
+    {
+      "need": "高纯石英砂分档历史价格",
+      "status": "covered"
+    },
+    {
+      "need": "价格波动驱动事件",
+      "status": "covered"
+    },
+    {
+      "need": "2026年最新报价",
+      "status": "search"
+    },
+    {
+      "need": "2030年供需预测",
+      "status": "search"
+    },
+    {
+      "need": "国产替代进度",
+      "status": "search"
+    },
+    {
+      "need": "半导体级砂认证进展",
+      "status": "search"
+    },
+    {
+      "need": "下游装机不及预期风险",
+      "status": "search"
+    },
+    {
+      "need": "产能过剩与价格风险",
+      "status": "search"
+    }
+  ],
+  "decisions": [],
+  "confirmed": true,
+  "confirmed_at": "2026-09-15T10:28:09"
+}

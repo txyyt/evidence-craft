@@ -1,5 +1,11 @@
 """数据源路由：adapter 注册表总览 / 外部连接配置 / 测试连接。
 
+[deprecated] 经典模式（报告类型）已废弃：本路由仅剩 /types 页面仍在使用，
+随经典 UI 下线一并摘除（V2 方案 §一 C6 / §三 §6）。不再新增功能。
+连接凭据只进 settings.yaml（gitignored），API 响应不回显密钥型字段
+（当前 database 为 SQLite 文件路径、rag 为 endpoint，均非密钥）。
+
+
 连接凭据只进 settings.yaml（gitignored），API 响应不回显密钥型字段
 （当前 database 为 SQLite 文件路径、rag 为 endpoint，均非密钥）。
 """

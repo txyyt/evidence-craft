@@ -29,7 +29,7 @@ GOOD_TREE = {
 }
 QUESTIONS = {"kind": "questions", "questions": ["报告主题是什么？", "给谁看？"]}
 # 编辑测试用的干净 spec（与 generate 产物同形态）
-CLEAN_SPEC, CLEAN_META = tree_agent._clean_tree_payload(GOOD_TREE)
+CLEAN_SPEC, CLEAN_META, _WARN = tree_agent._clean_tree_payload(GOOD_TREE)
 
 
 def _mock_chat(fixed):

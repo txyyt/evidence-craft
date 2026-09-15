@@ -1,0 +1,39 @@
+# 内置示例树 · 动态简报（简报体）
+id: tpl_dynamic_brief
+name: 动态简报
+description: 周期性行业动态简报：最新动态、关键数据一览与结论建议，适合月度/双周更新。
+genre: brief
+style_card: exec_brief
+writer_role: 行业分析师
+title_style: 短语式标题，15~25 字，点明周期与主题
+sections:
+  - id: 最新动态
+    title: 最新动态
+    kind: text
+    heading: "1　最新动态"
+    style: 按时间线罗列本期重要事件与变化，300~500 字，每条注明时间。
+    data_needs:
+      - 本期行业事件
+      - 政策与项目进展
+    origin: agent
+  - id: 关键数据一览
+    title: 关键数据一览
+    kind: table
+    heading: "表1　关键数据一览"
+    table: 关键事实
+    style: 用两三句话解读下表数据（数字以表格为准，不在正文另写表格）。
+    data_needs:
+      - 核心指标最新值
+    origin: agent
+  - id: 结论建议
+    title: 结论建议
+    kind: text
+    heading: "2　结论与建议"
+    style: 给出本期判断与下一步关注点，150~300 字，克制陈述。
+    data_needs:
+      - 结论支撑要点
+    origin: agent
+tables:
+  - id: 关键事实
+    renderer: facts_rows
+    source_prefix: rag

@@ -1,0 +1,207 @@
+tree:
+  id: 国内高纯石英研究报告
+  name: 国内高纯石英研究报告
+  subject: 中国高纯石英行业（砂/材料）市场研究
+  status: draft
+  version: 1
+  created_at: '2026-09-15T14:14:09'
+  provenance:
+    kind: dialogue
+  updated_at: '2026-09-15T14:14:09'
+report_type: tree
+version: 2
+description: 覆盖国内高纯石英的资源、供需、技术、竞争格局与趋势预测的时效性研究报告
+writer_role: 行业资深分析师（新材料/半导体材料方向）
+title_style: 客观陈述式，体现主体+维度，含时效性限定（如：2026-2030展望）
+title_check: {}
+sections:
+- id: 核心观点
+  title: 核心观点
+  kind: text
+  style: 提炼5-6条核心判断，每条一句话并附关键数据支撑，全文400-600字
+  data_needs:
+  - 2025-2026年中国高纯石英市场规模及增速
+  - 高纯石英砂价格走势
+  - 国产化率数据
+  origin: agent
+  check: {}
+  heading: 核心观点
+  inline: false
+  view_slots: []
+  charts: []
+- id: 行业概述
+  title: 行业概述与技术等级划分
+  kind: text
+  style: 界定高纯石英定义、纯度等级（如SiO2≥99.99%分级）、下游应用结构（光伏坩埚/半导体/光通信/光源），配一张下游应用结构饼图，600-900字
+  data_needs:
+  - 高纯石英纯度分级标准
+  - 下游应用领域占比
+  - 各等级产品价格区间
+  origin: agent
+  check: {}
+  heading: 1　行业概述与技术等级划分
+  inline: false
+  view_slots: []
+  charts:
+  - id: chart_downstream_pie
+    title: 2025年中国高纯石英下游应用结构（%）
+    type: pie
+    source: facts:web
+    y: []
+    unit: '%'
+    note: ''
+    bins: 10
+- id: 资源与供给
+  title: 资源禀赋与供给格局
+  kind: text
+  style: 分析国内石英矿资源（如太湖、新疆、江西等地的脉石英/花岗伟晶岩）、在产矿山与产能建设情况，配近5年国内产量柱状图，700-1000字
+  data_needs:
+  - 国内高纯石英原料矿分布与品位
+  - 2021-2025年国内高纯石英砂产量
+  - 新建/在建产能项目清单（至2026年）
+  origin: agent
+  check: {}
+  heading: 2　资源禀赋与供给格局
+  inline: false
+  view_slots: []
+  charts:
+  - id: chart_output_bar
+    title: 2021-2025年中国高纯石英砂产量（万吨）
+    type: bar
+    source: facts:web
+    y: []
+    unit: 万吨
+    note: ''
+    bins: 10
+- id: 市场供需
+  title: 市场需求与供需平衡
+  kind: text
+  style: 分光伏、半导体、光通信三大下游测算需求量，给出供需平衡表和缺口数据，分析进口依赖度，配需求/供给对比柱状图，700-1000字
+  data_needs:
+  - 2024-2026年光伏拉棒环节对坩埚用砂需求
+  - 国产半导体级石英砂需求量
+  - 高纯石英砂进口量与进口来源国
+  origin: agent
+  check: {}
+  heading: 3　市场需求与供需平衡
+  inline: false
+  view_slots: []
+  charts:
+  - id: chart_supply_demand
+    title: 2024-2026年中国高纯石英砂供需对比（万吨）
+    type: bar
+    source: facts:web
+    y: []
+    unit: 万吨
+    note: ''
+    bins: 10
+- id: 价格走势
+  title: 价格走势与成本分析
+  kind: text
+  style: 梳理2021-2026年高纯石英砂（内层/中层/外层砂）价格变化及驱动因素，分析提纯成本结构，500-700字
+  data_needs:
+  - 2021-2026年高纯石英砂季度或年度价格
+  - 提纯加工成本构成
+  - 国际龙头（如尤尼明）价格对比
+  origin: agent
+  check: {}
+  heading: 4　价格走势与成本分析
+  inline: false
+  view_slots: []
+  charts: []
+- id: 重点产能
+  title: 重点企业与产能项目一览
+  kind: table
+  style: 以表格列示国内主要高纯石英生产企业（如石英股份、凯德石英、菲利华等）的产能、技术等级、投产时间与项目进展，并在正文中补充200字解读，表格+解读合计
+  data_needs:
+  - 主要企业现有产能数据
+  - 在建及规划产能项目
+  - 企业高纯砂技术等级与出货结构
+  origin: agent
+  check: {}
+  heading: 5　重点企业与产能项目一览
+  inline: false
+  view_slots: []
+  table: tbl_companies
+  charts: []
+- id: 竞争格局
+  title: 竞争格局与国产替代进程
+  kind: text
+  style: 分析国内外竞争格局（美国尤尼明/挪威TQC与国内企业对比）、市场份额、半导体级产品认证进展，配国内企业市场份额柱状图，600-900字
+  data_needs:
+  - 国内外主要厂商市场份额
+  - 半导体级高纯砂认证进展
+  - 国产替代率变化趋势
+  origin: agent
+  check: {}
+  heading: 6　竞争格局与国产替代进程
+  inline: false
+  view_slots: []
+  charts:
+  - id: chart_market_share
+    title: 2025年全球高纯石英砂市场份额（%）
+    type: bar
+    source: facts:web
+    y: []
+    unit: '%'
+    note: ''
+    bins: 10
+- id: 趋势预测
+  title: 2027-2030年趋势预测
+  kind: text
+  style: 基于供需与产能建设节奏预测2027-2030年市场规模、供需平衡变化与价格区间，给出情景分析（乐观/中性/悲观），600-900字
+  data_needs:
+  - 2027-2030年光伏新增装机预测
+  - 国内新增产能释放时间表
+  - 价格趋势预测依据
+  origin: agent
+  check: {}
+  heading: 7　2027-2030年趋势预测
+  inline: false
+  view_slots: []
+  charts:
+  - id: chart_forecast_line
+    title: 2026-2030年中国高纯石英市场规模预测（亿元，三情景）
+    type: line
+    source: facts:web
+    y: []
+    unit: 亿元
+    note: ''
+    bins: 10
+- id: 风险提示
+  title: 风险提示
+  kind: text
+  style: 列示3-5条行业风险（资源品质不确定性、价格波动、技术替代、下游景气度等），每条1-2句，200-300字
+  data_needs:
+  - 资源储量与勘探风险
+  - 光伏行业景气度波动数据
+  - 合成石英等替代技术进展
+  origin: agent
+  check: {}
+  heading: 风险提示
+  inline: false
+  view_slots: []
+  charts: []
+tables:
+- id: tbl_companies
+  renderer: facts_rows
+  columns: []
+  source_prefix: web
+writing_rules:
+- 数据必须给出具体数值与年份/时间口径，注明数据来源
+- 图表紧贴正文论证，先文后图，图不超过6张、表不超过3张
+- 时效性要求：优先采用2024-2026年数据，明确数据截止时间
+- 行业术语首次出现给简短定义
+- 预测数据须给出预测方法或依据
+forbidden_words:
+- 非常
+- 极其
+- 绝对
+- 众所周知
+- 我觉得
+- 我觉得
+controlled_vocab: {}
+check_rules: []
+industry_keywords: []
+style_card: industry_research
+genre: research

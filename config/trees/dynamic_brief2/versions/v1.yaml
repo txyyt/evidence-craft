@@ -1,0 +1,68 @@
+tree:
+  id: dynamic_brief2
+  name: 动态简报
+  subject: 周期性行业动态简报：最新动态、关键数据一览与结论建议，适合月度/双周更新。
+  status: draft
+  version: 1
+  created_at: '2026-09-15T10:06:30'
+  provenance:
+    kind: template
+    template: tpl_dynamic_brief
+  updated_at: '2026-09-15T10:06:30'
+report_type: tpl_dynamic_brief
+version: 2
+description: 周期性行业动态简报：最新动态、关键数据一览与结论建议，适合月度/双周更新。
+writer_role: 行业分析师
+title_style: 短语式标题，15~25 字，点明周期与主题
+title_check: {}
+sections:
+- id: 最新动态
+  title: 最新动态
+  kind: text
+  style: 按时间线罗列本期重要事件与变化，300~500 字，每条注明时间。
+  data_needs:
+  - 本期行业事件
+  - 政策与项目进展
+  origin: agent
+  check: {}
+  heading: 1　最新动态
+  inline: false
+  view_slots: []
+  charts: []
+- id: 关键数据一览
+  title: 关键数据一览
+  kind: table
+  style: 用两三句话解读下表数据（数字以表格为准，不在正文另写表格）。
+  data_needs:
+  - 核心指标最新值
+  origin: agent
+  check: {}
+  heading: 表1　关键数据一览
+  inline: false
+  view_slots: []
+  table: 关键事实
+  charts: []
+- id: 结论建议
+  title: 结论建议
+  kind: text
+  style: 给出本期判断与下一步关注点，150~300 字，克制陈述。
+  data_needs:
+  - 结论支撑要点
+  origin: agent
+  check: {}
+  heading: 2　结论与建议
+  inline: false
+  view_slots: []
+  charts: []
+tables:
+- id: 关键事实
+  renderer: facts_rows
+  columns: []
+  source_prefix: rag
+writing_rules: []
+forbidden_words: []
+controlled_vocab: {}
+check_rules: []
+industry_keywords: []
+style_card: exec_brief
+genre: brief

@@ -1,0 +1,55 @@
+tree:
+  id: smoke_text
+  name: '冒烟树A：纯 text '
+  subject: 高纯石英
+  status: draft
+  version: 5
+  created_at: '2026-09-14T20:05:15'
+  provenance:
+    kind: manual
+  updated_at: '2026-09-15T13:44:07'
+report_type: smoke_text
+version: 2
+description: 冒烟树A：纯 text 结构（市场综述 + 展望建议）
+writer_role: 资深行业研究员
+title_style: 短语式标题，15~30 字，概括报告主题
+title_check: {}
+sections:
+- id: 背景与现状
+  title: 背景与现状
+  kind: text
+  style: 综述高纯石英的用途背景与我国资源供需现状，2 个自然段，数字全部引用事实切片。
+  data_needs:
+  - 高纯石英 市场供需
+  - 高纯石英 资源分布
+  origin: user
+  check:
+    body_len:
+    - 200
+    - 900
+  heading: 背景与现状
+  inline: false
+  view_slots: []
+  charts: []
+- id: 展望与建议
+  title: 展望与建议
+  kind: text
+  style: 基于事实切片总结找矿与提纯进展，给出展望，2 个自然段。
+  data_needs:
+  - 高纯石英 找矿进展
+  origin: user
+  check:
+    body_len:
+    - 200
+    - 900
+  heading: 展望与建议
+  inline: false
+  view_slots: []
+  charts: []
+tables: []
+writing_rules: []
+forbidden_words: []
+controlled_vocab: {}
+check_rules: []
+industry_keywords: []
+style_card: demo_style_v3

@@ -200,4 +200,5 @@ def summarize(run_dir: Path) -> dict[str, Any]:
             entry["type_id"] = j.get("type_id")
             entry["type_name"] = j.get("type_name")
             entry["template_fingerprint"] = j.get("template_fingerprint")
+            entry["tree_id"] = j.get("tree_id")            # V2 §三 §2 报告库来源列
     return entry

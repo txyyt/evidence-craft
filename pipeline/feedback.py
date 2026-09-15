@@ -15,6 +15,7 @@ rollback 恢复轮次快照。深度评审 = judge.run 全量按需触发（写 
 """
 
 import json
+import re
 import shutil
 from datetime import datetime
 from pathlib import Path
@@ -35,8 +36,16 @@ def _load_state(run_dir: Path) -> dict[str, Any]:
     sec = json.loads((run_dir / "sections.json").read_text(encoding="utf-8"))
     tree_id = meta.get("tree_id")
     if not tree_id or not tree_store.exists(tree_id):
-        raise ValueError(f"该运行不是树模式生成（tree_id={tree_id}），"
-                         "反馈回路仅支持树模式运行")
+        hint = ""
+        if tree_id:
+            # 树可能已改名（如 id 中文化迁移）：给出新树线索
+            from datalayer.settings import settings
+            root = settings.resolve("config/trees")
+            siblings = [d.name for d in root.iterdir() if d.is_dir()] \
+                if root.exists() else []
+            hint = f"（现存树：{'、'.join(siblings[:8])}——树若已改名，请从新树继续）"
+        raise ValueError(f"找不到该报告对应的结构树 tree_id={tree_id}，"
+                         f"反馈回路仅支持树模式运行{hint}")
     loaded = tree_store.load_tree(tree_id)
     return {"meta": meta, "doc": doc, "outline": outline,
             "views": sec.get("views") or [], "texts": sec.get("texts") or [],
@@ -194,6 +203,11 @@ def _run_data_ops(st: dict[str, Any], ops: list[dict[str, Any]],
             continue
         old_cited = t.get("cited_fact_ids") or []
         fresh_ids = [f["id"] for f in new_facts][:10]
+        instruction = op.get("instruction") or ""
+        if not new_facts:
+            # F4：取不到新事实——防"堆参数凑数"，注入定性声明
+            instruction += ("\n（未取到新数据）本节数据稀薄，以定性论述为主，"
+                            "禁止堆砌物性参数凑字数，不得新增任何数字。")
         from pipeline.sections import _fact_block
         facts_text, _ = _fact_block(st["doc"], old_cited + fresh_ids)
         out = revise._revise_issue(
@@ -217,12 +231,21 @@ def _run_structure_ops(st: dict[str, Any], ops: list[dict[str, Any]],
     norm_ops = []
     for o in ops:
         o = dict(o)
-        if o.get("action") == "add_section" and o.get("section"):
-            # 路由产的节对象可能字段形态不合规（如 data_needs 是字符串）：先归一化
-            cleaned = tree_agent._clean_section(o["section"])
-            if cleaned is None:
-                continue
-            o["section"] = cleaned
+        if o.get("action") == "add_section":
+            if o.get("section"):
+                # 路由产的节对象可能字段形态不合规（如 data_needs 是字符串）：先归一化
+                cleaned = tree_agent._clean_section(o["section"])
+                if cleaned is None:
+                    continue
+                o["section"] = cleaned
+            else:
+                # 兜底：路由只给了意见没给节对象——用 instruction 构造最小新节
+                title = re.sub(r"[，。；！？（）()「」]", " ",
+                               (o.get("instruction") or "").strip())[:20].strip() \
+                    or "新增节"
+                o["section"] = {"id": title, "title": title, "kind": "text",
+                                "style": (o.get("instruction") or "")[:200],
+                                "data_needs": []}
         norm_ops.append(o)
     applied, meta = tree_agent._apply_ops(spec_dict, meta, norm_ops)
     result = tree_store.save_tree(st["tree_id"], spec_dict, meta,
@@ -307,8 +330,22 @@ def _rerun_governance_and_render(st: dict[str, Any], run_dir: Path,
                                    st["risks"], rating, st["spec"], None,
                                    texts=st["texts"], notes=st["notes"])
     progress("feedback", "  重渲染图表与成品 ...", None)
-    chart_jobs = render_charts(st["doc"], st["spec"], run_dir,
-                               lambda m: progress("feedback", m, None))
+    import json as _json
+    chart_jobs, chart_failures = render_charts(
+        st["doc"], st["spec"], run_dir, lambda m: progress("feedback", m, None))
+    # F2：反馈轮重渲染后同步刷新 meta.json 的图表失败清单（数据补齐→失败消失）
+    try:
+        meta_path = run_dir / "meta.json"
+        meta_now = _json.loads(meta_path.read_text(encoding="utf-8"))
+        if chart_failures:
+            meta_now["chart_failures"] = chart_failures
+        else:
+            meta_now.pop("chart_failures", None)
+        meta_path.write_text(
+            _json.dumps(meta_now, ensure_ascii=False, indent=2),
+            encoding="utf-8")
+    except (OSError, ValueError):
+        pass
     html = html_report.render(st["doc"], st["outline"], st["views"], forecast,
                               st["risks"], st["spec"], rating=rating,
                               texts=st["texts"], notes=st["notes"], charts=chart_jobs)
@@ -358,6 +395,7 @@ def apply(run_dir: Path, ops: list[dict[str, Any]], text: str,
     style_ops = [o for o in ops if o.get("kind") == "style"]
     data_ops = [o for o in ops if o.get("kind") == "data"]
     struct_ops = [o for o in ops if o.get("kind") == "structure"]
+    tree_lint_summary: dict[str, Any] | None = None
 
     if style_ops:
         progress("feedback", f"  文风类 {len(style_ops)} 条 → 定向改写 ...", None)
@@ -377,6 +415,18 @@ def apply(run_dir: Path, ops: list[dict[str, Any]], text: str,
         applied += _run_data_ops(st, data_ops, run_dir, progress, cancel_event)
     if struct_ops:
         applied += _run_structure_ops(st, struct_ops, run_dir, progress, cancel_event)
+        # F12：结构操作改了树——执行后附带树健康摘要（前端立即可见）
+        try:
+            from trees.lint import lint as tree_lint_fn
+            loaded = tree_store.load_spec_dict(st["tree_id"])
+            lr = tree_lint_fn(loaded["spec_dict"])
+            tree_lint_summary = {"errors": len(lr["errors"]),
+                                 "warnings": len(lr["warnings"]),
+                                 "items": (lr["errors"] + lr["warnings"])[:5]}
+            applied.append(f"树健康：{tree_lint_summary['errors']} 错误 / "
+                           f"{tree_lint_summary['warnings']} 提醒")
+        except Exception as e:  # noqa: BLE001 —— lint 摘要失败不阻塞
+            applied.append(f"树健康摘要失败：{e}")
     if not applied:
         return {"round": round_no, "applied": [], "summary": "没有可执行的意见"}
 
@@ -407,6 +457,8 @@ def apply(run_dir: Path, ops: list[dict[str, Any]], text: str,
              "applied_summary": "；".join(applied),
              "reconcile": report.get("status"), "validate": validate_report.get("status"),
              "rolled_back": False}
+    if tree_lint_summary is not None:
+        entry["tree_lint"] = tree_lint_summary    # F12
     with open(run_dir / "feedback_ledger.jsonl", "a", encoding="utf-8") as f:
         f.write(json.dumps(entry, ensure_ascii=False) + "\n")
     progress("feedback", f"  第 {round_no} 轮完成：{'；'.join(applied)}"
@@ -417,21 +469,32 @@ def apply(run_dir: Path, ops: list[dict[str, Any]], text: str,
 # ---------- 轮次 / 回滚 / 深度评审 ----------
 
 def rounds(run_dir: Path) -> list[dict[str, Any]]:
-    rd = Path(run_dir) / "rounds"
-    out = []
+    """轮次列表：rounds/<n>/ 目录 ∪ 台账轮号（回滚条目无目录也要可见）。"""
+    run_dir = Path(run_dir)
+    rd = run_dir / "rounds"
+    out: dict[int, dict[str, Any]] = {}
     if rd.exists():
-        for d in sorted(rd.iterdir(), key=lambda x: int(x.name) if x.name.isdigit() else 0):
-            diff_path = d / "diff.json"
-            entry = {"round": int(d.name) if d.name.isdigit() else 0,
-                     "has_diff": diff_path.exists()}
-            ledger = read_ledger(Path(run_dir))
-            match = [e for e in ledger if e.get("round") == entry["round"]]
-            if match:
-                entry.update({"text": match[0].get("text"),
-                              "applied": match[0].get("applied"),
-                              "rolled_back": match[0].get("rolled_back")})
-            out.append(entry)
-    return out
+        for d in rd.iterdir():
+            if d.is_dir() and d.name.isdigit():
+                out[int(d.name)] = {"round": int(d.name),
+                                    "has_diff": (d / "diff.json").exists()}
+    for e in read_ledger(run_dir):
+        n = e.get("round")
+        if isinstance(n, int) and n not in out:
+            out[n] = {"round": n, "has_diff": False}
+    for entry in out.values():
+        match = [e for e in read_ledger(run_dir)
+                 if e.get("round") == entry["round"]]
+        if match:
+            entry.update({"text": match[0].get("text"),
+                          "applied": match[0].get("applied"),
+                          "rolled_back": match[0].get("rolled_back")})
+            # C3：当轮对账/校验状态上界面
+            entry["reconcile"] = match[0].get("reconcile")
+            entry["validate"] = match[0].get("validate")
+            if match[0].get("tree_lint"):
+                entry["tree_lint"] = match[0]["tree_lint"]   # F12
+    return [out[k] for k in sorted(out)]
 
 
 def read_ledger(run_dir: Path) -> list[dict[str, Any]]:
@@ -473,13 +536,15 @@ def rollback(run_dir: Path, round_no: int, progress=None) -> dict[str, Any]:
 
 
 def judge_deep(run_dir: Path, progress=None) -> dict[str, Any]:
-    """按需深度评审：judge.run 全量跑一遍并写 judge_report.json。"""
+    """按需深度评审（F8）：线程并行三次 judge.run，各维分数取中位数、
+    总分按中位分数重算，附三次原始分与极差（>4 标注"评分不稳定"）。"""
     progress = progress or (lambda *a: None)
     run_dir = Path(run_dir)
     st = _load_state(run_dir)
+    from concurrent.futures import ThreadPoolExecutor
     from pipeline import judge
     from pipeline.rating import rule_rating
-    progress("feedback", "深度评审（judge 全量）...", None)
+    progress("feedback", "深度评审（judge 三评取中位）...", None)
     rating = rule_rating(st["doc"])
     forecast = (st["notes"].get(next(iter(st["notes"]), ""))
                 or {"body": "", "cited_fact_ids": []}) if st["notes"] \
@@ -490,9 +555,74 @@ def judge_deep(run_dir: Path, progress=None) -> dict[str, Any]:
     validate_report = validate.run(st["doc"], st["outline"], st["views"], forecast,
                                    st["risks"], rating, st["spec"], None,
                                    texts=st["texts"], notes=st["notes"])
-    out = judge.run(st["doc"], st["outline"], st["views"], forecast, st["risks"],
-                    report, validate_report, st["spec"], rating,
-                    texts=st["texts"], notes=st["notes"])
+
+    def _one(_i: int) -> dict[str, Any]:
+        return judge.run(st["doc"], st["outline"], st["views"], forecast,
+                         st["risks"], report, validate_report, st["spec"],
+                         rating, texts=st["texts"], notes=st["notes"])
+
+    with ThreadPoolExecutor(max_workers=3) as ex:
+        runs = list(ex.map(_one, range(3)))
+    merged = merge_median_judges(runs)
     (run_dir / "judge_report.json").write_text(
-        json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8")
-    return out
+        json.dumps(merged, ensure_ascii=False, indent=2), encoding="utf-8")
+    progress("feedback", f"深度评审完成：中位总分 {merged['total']}，"
+                         f"三次原始分 {[r.get('total') for r in runs]}", None)
+    return merged
+
+
+_DIMS = ("structure", "professionalism", "data_support", "compliance",
+         "readability")
+
+
+def merge_median_judges(runs: list[dict[str, Any]]) -> dict[str, Any]:
+    """F8 中位合并：各维取三次评审的中位数、总分按中位分重算；附三次原始分
+    与极差（>4 标"评分不稳定"）。verdict 按中位总分 + 单维>4 判定。"""
+    from datalayer.settings import settings as _settings
+
+    def _score_of(r: dict, d: str) -> int | None:
+        v = (r.get("scores") or {}).get(d)
+        return v.get("score") if isinstance(v, dict) else None
+
+    median_scores: dict[str, dict[str, Any]] = {}
+    spread: dict[str, int] = {}
+    unstable: list[str] = []
+    for d in _DIMS:
+        vals = [s for s in (_score_of(r, d) for r in runs) if s is not None]
+        if not vals:
+            continue
+        vals_sorted = sorted(vals)
+        med = vals_sorted[len(vals_sorted) // 2]
+        spread[d] = max(vals) - min(vals)
+        comment = next((c.get("comment") for c in
+                        (r.get("scores", {}).get(d) or {} for r in runs)
+                        if isinstance(c, dict) and c.get("score") == med
+                        and c.get("comment")), "")
+        median_scores[d] = {"score": med, "comment": comment}
+        if spread[d] > 4:
+            unstable.append(f"{d}（极差 {spread[d]}）")
+    total = sum(v["score"] for v in median_scores.values())
+    min_score = min((v["score"] for v in median_scores.values()), default=0)
+    threshold = int((_settings.pipeline or {}).get("judge_threshold", 36))
+    verdict = "pass" if (total >= threshold and min_score > 4) else "fail"
+    issues: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for r in runs:
+        for it in r.get("issues") or []:
+            key = str(it.get("target")) + "|" + str(it.get("problem"))[:40]
+            if key not in seen:
+                seen.add(key)
+                issues.append(it)
+    merged = {"scores": median_scores, "total": total, "verdict": verdict,
+              "threshold": threshold, "issues": issues if verdict == "fail" else [],
+              "method": "median_of_3",
+              "runs": [{k: r.get(k) for k in ("total", "verdict")}
+                       for r in runs],
+              "raw_runs": [{"scores": {d: _score_of(r, d) for d in _DIMS}}
+                           for r in runs],
+              "spread": spread,
+              "unstable": unstable}
+    if unstable:
+        merged["unstable_note"] = ("以下维度评分不稳定（三次极差>4），"
+                                   "结论仅供参考：" + "、".join(unstable))
+    return merged

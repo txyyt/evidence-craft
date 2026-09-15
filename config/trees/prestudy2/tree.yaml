@@ -1,0 +1,88 @@
+tree:
+  id: prestudy2
+  name: 项目可研
+  subject: 项目预可研/立项结构：概况、资源与工艺条件、市场与经济性、风险与建议，适合矿产资源类项目。
+  status: draft
+  version: 1
+  created_at: '2026-09-15T10:06:53'
+  provenance:
+    kind: template
+    template: tpl_prestudy
+  updated_at: '2026-09-15T10:06:53'
+report_type: tpl_prestudy
+version: 2
+description: 项目预可研/立项结构：概况、资源与工艺条件、市场与经济性、风险与建议，适合矿产资源类项目。
+writer_role: 项目评估分析师
+title_style: 标题含项目名与「预可研/评估」，20~35 字
+title_check: {}
+sections:
+- id: 项目概况
+  title: 项目概况
+  kind: text
+  style: 交代项目位置、主体、建设内容与进度安排，250~400 字。
+  data_needs:
+  - 项目基本信息
+  - 建设内容与规模
+  origin: agent
+  check: {}
+  heading: 1　项目概况
+  inline: false
+  view_slots: []
+  charts: []
+- id: 资源与工艺条件
+  title: 资源与工艺条件
+  kind: text
+  style: 论述资源保障程度、品位特征与选矿工艺路线适配性，500~900 字。
+  data_needs:
+  - 资源储量与品位
+  - 选矿试验指标
+  origin: agent
+  check: {}
+  heading: 2　资源与工艺条件
+  inline: false
+  view_slots: []
+  charts: []
+- id: 市场与经济性
+  title: 市场与经济性
+  kind: table
+  style: 用一段话解读测算表（价格假设、成本区间与敏感性），数字以表格为准。
+  data_needs:
+  - 产品价格
+  - 成本与费用
+  origin: agent
+  check: {}
+  heading: 表1　市场与经济性测算
+  inline: false
+  view_slots: []
+  table: 关键事实
+  charts: []
+- id: 风险与建议
+  title: 风险与建议
+  kind: risk
+  style: 3~5 条风险，用分号分隔成一行，每条以"风险"结尾，并给出对应建议方向。
+  data_needs:
+  - 项目主要风险
+  origin: agent
+  check:
+    count:
+    - 3
+    - 5
+    item_suffix: 风险
+    min_shaped: 2
+  heading: 3　风险与建议
+  inline: false
+  view_slots: []
+  strategy: enumerate
+  charts: []
+tables:
+- id: 关键事实
+  renderer: facts_rows
+  columns: []
+  source_prefix: rag
+writing_rules: []
+forbidden_words: []
+controlled_vocab: {}
+check_rules: []
+industry_keywords: []
+style_card: industry_research
+genre: research

@@ -9,10 +9,11 @@ compliance 合规性 / readability 可读性，各 1~10 分。总分 ≥36 且�
 views（核心观点）为可选章节：模板不设观点章时评审对象只剩标题/表格/综述/风险。
 """
 
+import re
 from typing import Any
 
 from datalayer.settings import settings
-from pipeline.llm import chat_json, tier_for
+from pipeline.llm import chat_json, pipeline_temperature, tier_for
 from template_factory.schema import SpecV2
 
 SYSTEM = """你是报告质量评审官。{framing}，
@@ -36,6 +37,47 @@ _SCORES_JSON = """
 "verdict": "pass|fail",
 "issues": [{{"target": "...", "problem": "...", "instruction": "..."}}]}}
 issues 仅在 fail 时给出，target 必须用上述取值。"""
+
+
+# E1：issue 分类信号词
+_WRITE_SIGNS = ("残句", "截断", "未完成", "扩写", "压缩", "字数",
+                "内容缺少", "论述不足", "深度不足", "未展开")
+_STRUCT_SIGNS = ("重复节", "多余节", "节顺序", "章节缺失", "整节缺失",
+                 "缺表", "未附表", "未附图", "结构缺失")
+_DATA_SIGNS = ("数据", "数字", "对账", "引用", "出处")
+
+
+def classify_issue_kind(problem: str, instruction: str = "") -> str:
+    """E1 issue 分类：写作信号词（含"仅 N 字"形态）优先命中 → 绝不归结构类
+    （P6 实锤：含"缺少"的写作问题被误归结构类后遭确定性处理器跳过、残句
+    两轮冻结）；结构类收紧为"结构动作+结构对象"组合；数据信号 → data；
+    默认 style。保持三值 kind 协议不变。"""
+    text = (problem or "") + (instruction or "")
+    if any(k in text for k in _WRITE_SIGNS) or re.search(r"仅.{0,6}字", text):
+        return "data" if any(k in text for k in _DATA_SIGNS) else "style"
+    if any(k in text for k in _STRUCT_SIGNS) \
+            or re.search(r"(重复|多余|缺失|缺少|缺).{0,6}(节|章)", text):
+        return "structure"
+    if any(k in text for k in _DATA_SIGNS):
+        return "data"
+    return "style"
+
+
+def _merge_synthetic_issue(out: dict[str, Any], target: str,
+                           problem: str, instruction: str) -> None:
+    """E2：系统合成指令落 issues。同 target 已有 issue 时追加进该条
+    instruction（前缀【系统校验】，换行拼接）而不是被去重吞掉——同 target
+    的指令始终一条、重写一次、信息不丢；无冲突才新建条目。verdict 恒 fail。"""
+    out["verdict"] = "fail"
+    for it in out.get("issues") or []:
+        if it.get("target") == target:
+            seg = f"【系统校验】{problem} → {instruction}"
+            if seg not in (it.get("instruction") or ""):
+                it["instruction"] = \
+                    ((it.get("instruction") or "") + "\n" + seg).strip()
+            return
+    out.setdefault("issues", []).append(
+        {"target": target, "problem": problem, "instruction": instruction})
 
 
 def run(doc: dict[str, Any], outline: dict[str, Any],
@@ -157,7 +199,8 @@ def run(doc: dict[str, Any], outline: dict[str, Any],
     out = chat_json(system, "\n".join(blocks),
                     schema_hint="只输出一个合法 JSON 对象。issues 的 target "
                                 "只能用：" + "、".join(targets),
-                    max_tokens=4000, tier=tier_for("write"))
+                    max_tokens=4000, tier=tier_for("write"),
+                    temperature=pipeline_temperature("judge"))
     # 兼容多种输出：{"structure": 8} / {"structure": {"score": 8, ...}} /
     # 偶发把非评分内容（如 "fail"）塞进 scores——跳过该维度
     scores: dict[str, dict[str, Any]] = {}
@@ -181,19 +224,14 @@ def run(doc: dict[str, Any], outline: dict[str, Any],
 
     # 对账兜底（代码级强制）：存在未匹配数字的节必须 FAIL——评审不得主观放过
     dirty = [c for c in reconcile_report["checks"] if c["unknown_numbers"]]
-    if dirty:
-        out["verdict"] = "fail"
-        have = {i.get("target") for i in out.get("issues") or []}
-        for c in dirty:
-            if c["section"] in have:
-                continue
-            out.setdefault("issues", []).append({
-                "target": c["section"],
-                "problem": f"正文存在 {len(c['unknown_numbers'])} 个无法对账的数字"
-                           f"（{c['unknown_numbers']}），无事实出处",
-                "instruction": "只允许引用事实编号中的数字，禁止对事实数字做任何"
-                               "计算（合计/倍数/占比推导）；无出处的数字删除，"
-                               "相关内容改为定性表述。"})
+    for c in dirty:
+        _merge_synthetic_issue(
+            out, c["section"],
+            f"正文存在 {len(c['unknown_numbers'])} 个无法对账的数字"
+            f"（{c['unknown_numbers']}），无事实出处",
+            "只允许引用事实编号中的数字，禁止对事实数字做任何"
+            "计算（合计/倍数/占比推导）；无出处的数字删除，"
+            "相关内容改为定性表述。")
     # 规则硬伤兜底：validate FAIL 项合成修订指令（字数类硬伤 judge 评语可能遗漏
     # 或与其他意见相互抵消，导致修订越改越长）
     for i in validate_report.get("items", []):
@@ -241,11 +279,10 @@ def run(doc: dict[str, Any], outline: dict[str, Any],
             instruction = "按格式要求重写风险提示。"
         else:
             continue
-        out["verdict"] = "fail"
-        have = {x.get("target") for x in out.get("issues") or []}
-        if target not in have:
-            out.setdefault("issues", []).append(
-                {"target": target, "problem": detail, "instruction": instruction})
+        _merge_synthetic_issue(out, target, detail, instruction)
     if out["verdict"] == "pass":
         out["issues"] = []
+    for it in out.get("issues") or []:
+        it["kind"] = classify_issue_kind(it.get("problem") or "",
+                                         it.get("instruction") or "")
     return out

@@ -30,6 +30,7 @@ class TreeSaveIn(BaseModel):
     spec_dict: dict
     meta: dict = Field(default_factory=dict)   # name/subject/status/genre/style_card
     summary: str = ""
+    base_version: int | None = None    # B5 乐观锁：编辑器当前看到的版本
 
 
 class RollbackIn(BaseModel):
@@ -52,6 +53,132 @@ _DEFAULT_SPEC = {
 def style_cards() -> list[dict]:
     from pipeline.stylecards import list_cards
     return list_cards()
+
+
+# ---------- C：文风卡管理（写端点，树模式只增不改；内置三卡只读保护） ----------
+
+class StyleCardIn(BaseModel):
+    id: str
+    name: str = ""
+    desc: str = ""
+    rules: str = ""
+    excerpts: list[dict] = Field(default_factory=list)   # [{text, source?}]
+
+
+@router.post("/style-cards")
+def create_style_card(body: StyleCardIn) -> dict:
+    """新建自定义文风卡（id 防覆盖），写入即落盘 config/style_cards/<id>.yaml。"""
+    from pipeline import stylecards
+    try:
+        if stylecards.card_path(body.id).exists():
+            raise HTTPException(409, f"文风卡 id 已存在：{body.id}")
+        card = stylecards.save_card(body.model_dump())
+    except HTTPException:
+        raise
+    except PermissionError as e:
+        raise HTTPException(403, str(e))
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    return {"ok": True, "card": card}
+
+
+@router.put("/style-cards/{card_id}")
+def save_style_card(card_id: str, body: StyleCardIn) -> dict:
+    """保存自定义文风卡（内置卡 403；手改 YAML 与此处保存都立即生效——无缓存）。"""
+    from pipeline import stylecards
+    if body.id and body.id != card_id:
+        raise HTTPException(422, "请求体 id 与 URL 中的 id 不一致")
+    body.id = card_id
+    if not stylecards.card_path(card_id).exists():
+        raise HTTPException(404, f"文风卡不存在：{card_id}")
+    try:
+        card = stylecards.save_card(body.model_dump())
+    except PermissionError as e:
+        raise HTTPException(403, str(e))
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    return {"ok": True, "card": card}
+
+
+@router.delete("/style-cards/{card_id}")
+def delete_style_card(card_id: str) -> dict:
+    """删除自定义文风卡（内置卡 403）；被树引用时 409 附引用树清单。"""
+    from pipeline import stylecards
+    try:
+        used = stylecards.delete_card(card_id)
+    except PermissionError as e:
+        raise HTTPException(403, str(e))
+    except FileNotFoundError:
+        raise HTTPException(404, f"文风卡不存在：{card_id}")
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    if used:
+        raise HTTPException(409, f"文风卡正被 {len(used)} 棵树引用："
+                                 f"{'、'.join(used)}；请先改这些树的文风卡选择")
+    return {"ok": True}
+
+
+# ---------- V2 §三 §4：内置示例树（config/tree_templates/ 只读目录） ----------
+
+@router.get("/templates")
+def list_tree_templates() -> list[dict]:
+    import yaml
+    from datalayer.settings import settings
+    root = settings.resolve("config/tree_templates")
+    out = []
+    if root.exists():
+        for p in sorted(root.glob("*.yaml")):
+            try:
+                with open(p, encoding="utf-8") as f:
+                    t = yaml.safe_load(f)
+            except (OSError, Exception):  # noqa: BLE001 —— 单个模板损坏跳过
+                continue
+            if isinstance(t, dict) and t.get("id"):
+                out.append({"id": t["id"], "name": t.get("name", t["id"]),
+                            "description": t.get("description", ""),
+                            "genre": t.get("genre"),
+                            "style_card": t.get("style_card"),
+                            "n_sections": len(t.get("sections") or [])})
+    return out
+
+
+class TemplateCopyIn(BaseModel):
+    template_id: str
+
+
+@router.post("/templates/copy")
+def copy_tree_template(body: TemplateCopyIn) -> dict:
+    """选中示例树 → 复制为可编辑草稿（provenance 记模板来源）。"""
+    import yaml
+    from datalayer.settings import settings
+    if "/" in body.template_id or "\\" in body.template_id \
+            or ".." in body.template_id:
+        raise HTTPException(403, "非法模板 id")
+    p = settings.resolve(f"config/tree_templates/{body.template_id}.yaml")
+    if not p.exists():
+        raise HTTPException(404, f"示例树不存在：{body.template_id}")
+    with open(p, encoding="utf-8") as f:
+        t = yaml.safe_load(f) or {}
+    spec_dict = {k: v for k, v in t.items()
+                 if k not in ("id", "name", "description")}
+    spec_dict["report_type"] = t["id"]
+    spec_dict["description"] = t.get("description") or t.get("name") or t["id"]
+    meta = {"name": t.get("name") or t["id"],
+            "subject": t.get("description", "")[:60] or t["id"],
+            "provenance": {"kind": "template", "template": t["id"]}}
+    base = t["id"].replace("tpl_", "")
+    tid = base
+    n = 2
+    while tree_store.exists(tid):
+        tid = f"{base}{n}"
+        n += 1
+    saved = tree_store.save_tree(tid, spec_dict, meta, actor="system",
+                                 summary=f"从示例树 {t['id']} 复制",
+                                 op={"action": "template_copy",
+                                     "template": t["id"]})
+    return {"ok": True, "id": tid, "name": meta["name"],
+            "version": saved["meta"]["version"],
+            "fingerprint": saved["fingerprint"]}
 
 
 @router.get("")
@@ -100,15 +227,23 @@ def tree_detail(tree_id: str) -> dict:
 def save_tree(tree_id: str, body: TreeSaveIn) -> dict:
     if not tree_store.exists(tree_id):
         raise HTTPException(404, f"结构树不存在：{tree_id}")
+    lint_result = tree_lint.lint(body.spec_dict)
+    if lint_result["errors"]:
+        # A2：lint error 拦保存（标题重复等结构问题先修再存）
+        raise HTTPException(422, "保存被拦（结构问题）："
+                            + "；".join(lint_result["errors"][:3]))
     try:
         result = tree_store.save_tree(tree_id, body.spec_dict, body.meta,
                                       actor="manual",
-                                      summary=body.summary or "手动保存")
+                                      summary=body.summary or "手动保存",
+                                      base_version=body.base_version)
+    except tree_store.TreeConflict as e:
+        raise HTTPException(409, str(e))
     except ValueError as e:
         raise HTTPException(422, str(e))
     return {"ok": True, "version": result["meta"]["version"],
             "fingerprint": result["fingerprint"],
-            "lint": tree_lint.lint(body.spec_dict)}
+            "lint": lint_result}
 
 
 @router.get("/{tree_id}/versions")
@@ -155,12 +290,14 @@ class GenerateIn(BaseModel):
 
 class ChatEditIn(BaseModel):
     message: str
+    base_version: int | None = None   # B5 乐观锁（对话改树与手动保存共用）
 
 
 def _slug(name: str) -> str:
+    """树 id 生成（C5 中文化）：中文/字母/数字保留，其余折 _；退化兜底时间戳。"""
     import re
     import time
-    s = re.sub(r"[^a-z0-9_]+", "_", name.lower()).strip("_")
+    s = re.sub(r"[^\w\u4e00-\u9fff-]+", "_", str(name or "").strip()).strip("_")
     return s[:40] or f"tree_{int(time.time())}"
 
 
@@ -191,7 +328,8 @@ def generate_tree(body: GenerateIn) -> dict:
     return {"kind": "tree", "tree_id": tid, "name": meta.get("name"),
             "spec_dict": spec_dict, "version": saved["meta"]["version"],
             "fingerprint": saved["fingerprint"],
-            "lint": tree_lint.lint(spec_dict)}
+            "lint": tree_lint.lint(spec_dict),
+            "warnings": result.get("warnings") or []}
 
 
 @router.post("/{tree_id}/chat")
@@ -201,9 +339,12 @@ def chat_edit(tree_id: str, body: ChatEditIn) -> dict:
     if not tree_store.exists(tree_id):
         raise HTTPException(404, f"结构树不存在：{tree_id}")
     try:
-        return tree_agent.edit(tree_id, body.message)
+        return tree_agent.edit(tree_id, body.message,
+                               base_version=body.base_version)
     except tree_agent.TreeAgentError as e:
         raise HTTPException(422, str(e))
+    except tree_store.TreeConflict as e:
+        raise HTTPException(409, str(e))
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"树编辑失败：{type(e).__name__}: {e}")
 
@@ -256,18 +397,102 @@ class PlanConfirmIn(BaseModel):
 
 @router.post("/{tree_id}/plan/confirm")
 def plan_confirm(tree_id: str, body: PlanConfirmIn) -> dict:
-    """缺口四选一裁决 → 落效（计划 + 树）→ 过确认门槛。"""
+    """缺口四选一裁决 → 落效（计划 + 树）→ 过确认门槛。
+    通过时在计划文件持久化 confirmed: true（A4：生成门禁复查依据）。"""
     if not tree_store.exists(tree_id):
         raise HTTPException(404, f"结构树不存在：{tree_id}")
     result = tree_store.apply_decisions(tree_id, body.plan_file,
                                         [d.model_dump() for d in body.decisions])
     gate = tree_store.coverage_gate(result["plan"])
     if not gate["ok"]:
-        return {"ok": False, **gate, "coverage": result["coverage"]}
+        return {**gate, "ok": False, "coverage": result["coverage"]}
     if gate["all_qualitative"] and not body.all_qualitative:
-        return {"ok": False, **gate, "coverage": result["coverage"],
+        # 注意 **gate 必须在前：gate 里也有 ok 键，字面量要后置覆盖
+        return {**gate, "ok": False, "coverage": result["coverage"],
                 "need_confirm": "全树无数据来源（全定性生成），需二次确认"}
-    return {"ok": True, **gate, "coverage": result["coverage"]}
+    plan = result["plan"]
+    if not plan.get("confirmed"):
+        from datetime import datetime
+        plan["confirmed"] = True
+        plan["confirmed_at"] = datetime.now().isoformat(timespec="seconds")
+        tree_store.save_plan_file(tree_id, body.plan_file, plan)
+    return {**gate, "ok": True, "coverage": result["coverage"]}
+
+
+@router.post("/{tree_id}/copy")
+def copy_tree(tree_id: str) -> dict:
+    """F10 树派生：复制为可编辑草稿（新 id=原名_派生N）。"""
+    if not tree_store.exists(tree_id):
+        raise HTTPException(404, f"结构树不存在：{tree_id}")
+    result = tree_store.copy_tree(tree_id)
+    return {"ok": True, **result}
+
+
+class PlanPreviewIn(BaseModel):
+    plan_file: str
+
+
+@router.post("/{tree_id}/plan/preview")
+async def plan_preview(tree_id: str, body: PlanPreviewIn) -> dict:
+    """F9 树模式数据预检：按计划只跑数据层（分钟级），返回事实数/来源分布/
+    样本事实。计划内容指纹一致时直接复用上次预检结果（避免重复烧调用）。
+    须为 async def：数据层跑在线程里，不阻塞事件循环。"""
+    import asyncio
+    import hashlib
+    import json as _json
+    if not tree_store.exists(tree_id):
+        raise HTTPException(404, f"结构树不存在：{tree_id}")
+    plan = tree_store.load_plan(tree_id, body.plan_file)
+    # 内容指纹：取数相关字段（不含确认状态/裁决记录等易变字段）
+    # E6：file_bindings 必须入指纹——换 Excel 不换查询时吃旧缓存（P7）
+    fp_src = {k: plan.get(k) for k in ("rag", "web", "db", "tables_kept",
+                                       "corpus", "mode", "file_bindings")}
+    fp = hashlib.sha256(_json.dumps(fp_src, ensure_ascii=False, sort_keys=True,
+                                    default=str).encode("utf-8")).hexdigest()[:16]
+    cache = tree_store.tree_dir(tree_id) / "plans" / f"_preview_{fp}.json"
+    if cache.exists():
+        try:
+            cached = _json.loads(cache.read_text(encoding="utf-8"))
+            cached["cached"] = True
+            cached["fingerprint"] = fp
+            return cached
+        except ValueError:
+            pass
+
+    def _run() -> dict:
+        from datalayer.planner import plan_to_bindings
+        from datalayer import registry
+        loaded = tree_store.load_tree(tree_id)
+        spec, meta = loaded["spec"], loaded["meta"]
+        sources = tree_store.synthetic_sources(meta, spec)
+        doc, crosscheck = registry.run_data_layer(
+            tree_id, {"project": meta.get("subject") or tree_id},
+            bindings_override=plan_to_bindings(plan, sources),
+            sources_override=sources)
+        by_src: dict[str, int] = {}
+        for f in doc["facts"]:
+            src = str(f.get("source", ""))[:20] or "unknown"
+            by_src[src] = by_src.get(src, 0) + 1
+        return {"ok": len(doc["facts"]) > 0,
+                "n_facts": len(doc["facts"]),
+                "by_source": by_src,
+                "crosscheck": (crosscheck or {}).get("status") if crosscheck else None,
+                "sample": doc["facts"][:5],
+                "warnings": (doc["meta"].get("warnings") or [])[:5],
+                "error": None if doc["facts"] else "计划执行后 0 事实（检查查询/语料）",
+                "cached": False}
+
+    try:
+        result = await asyncio.to_thread(_run)
+    except FileNotFoundError as e:
+        raise HTTPException(422, f"数据文件不存在：{e}")
+    except Exception as e:  # noqa: BLE001 —— 预检就是把问题提前报出来
+        raise HTTPException(502, f"预检失败：{type(e).__name__}: {e}")
+    result["fingerprint"] = fp
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    cache.write_text(_json.dumps(result, ensure_ascii=False, indent=2),
+                     encoding="utf-8")
+    return result
 
 
 @router.get("/{tree_id}/plans/{plan_name}")

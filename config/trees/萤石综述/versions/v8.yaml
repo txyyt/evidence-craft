@@ -1,0 +1,173 @@
+tree:
+  id: 萤石综述
+  name: 萤石综述
+  subject: 国内萤石（氟化工原料）资源勘查与开发动态
+  status: draft
+  version: 8
+  created_at: '2026-09-14T21:16:08'
+  provenance:
+    kind: dialogue
+  updated_at: '2026-09-15T00:22:22'
+report_type: tree
+version: 2
+description: 以期刊综述口吻梳理国内萤石资源禀赋、供需、勘查进展与问题建议的中等篇幅综述报告。
+writer_role: 资源经济领域综述作者（期刊综述口吻）
+title_style: 学术式标题，准确克制，可加副标题限定范围（国内）
+title_check: {}
+sections:
+- id: 摘要
+  title: 摘要
+  kind: text
+  style: 概括研究范围（国内萤石）、资源与勘查结论要点与建议要点，250~300 字，口径为近年公开数据。
+  data_needs:
+  - 全国萤石资源量
+  - 近年查明储量变化
+  - 勘查新增矿点概况
+  origin: agent
+  check: {}
+  heading: 摘要
+  inline: false
+  view_slots: []
+  charts: []
+- id: 资源禀赋与矿床特征
+  title: 资源禀赋与矿床特征
+  kind: text
+  style: 综述全国萤石资源总量、品位特征与矿床类型（单一型/伴生型），分区描述（华东、中南、西北等）重点省份分布，800~1200 字。
+  data_needs:
+  - 全国萤石资源储量
+  - 主要省份分布数据
+  - 矿床类型与品位
+  - 开发利用查明储量
+  origin: user
+  check: {}
+  heading: 1　资源禀赋与分布
+  inline: false
+  view_slots: []
+  charts: []
+- id: 市场供需
+  title: 市场供需
+  kind: text
+  style: 分供给端（产量、产能格局）与需求端（氟化工、冶金、建材等领域用量）论述供需平衡与价格走势趋势，800~1200 字；含消费结构表与消费结构饼图。
+  data_needs:
+  - 近年萤石产量与进口量
+  - 下游各领域消费量占比
+  - 供需平衡与价格趋势
+  - 氟化工产能布局
+  origin: user
+  check: {}
+  heading: 2　市场供需
+  inline: false
+  view_slots: []
+  charts:
+  - id: chart_consumption_pie
+    title: 国内萤石消费结构
+    type: pie
+    source: facts:web
+    y: []
+    unit: '%'
+    note: ''
+    bins: 10
+- id: 萤石下游消费结构
+  title: 萤石下游消费结构
+  kind: table
+  table: tbl_consumption
+  heading: 表1　萤石下游消费结构
+  style: 用两三句话解读下表数据（数字以表格为准，不在正文另写表格）。
+  data_needs:
+  - 下游各领域消费量占比
+  origin: user
+- id: 勘查开发进展
+  title: 勘查开发进展
+  kind: text
+  style: 综述近年地质勘查资金投入与新一轮找矿行动背景下的萤石找矿成果，逐一点明新发现矿点（矿区名称、所在地、规模），并概述绿色矿山与整合开发动态，900~1300
+    字；附主要新发现矿点一览表。
+  data_needs:
+  - 近年新发现萤石矿点清单
+  - 勘查投入与找矿突破成果
+  - 矿点规模（推断资源量）
+  origin: user
+  check: {}
+  heading: 3　勘查开发进展
+  inline: false
+  view_slots: []
+  charts: []
+- id: 近年新增萤石矿点
+  title: 近年新增萤石矿点
+  kind: table
+  table: tbl_new_deposits
+  heading: 表2　近年新增萤石矿点
+  style: 用两三句话解读下表数据（数字以表格为准，不在正文另写表格）。
+  data_needs:
+  - 近年新发现萤石矿点清单
+  origin: user
+- id: 提纯技术进展
+  title: 提纯技术进展
+  kind: text
+  style: 综述萤石提纯工艺（如浮选、重选等）与产业化现状，约300字，客观陈述。
+  data_needs:
+  - 提纯工艺
+  origin: user
+  check: {}
+  heading: 4　提纯技术进展
+  inline: false
+  view_slots: []
+  charts: []
+- id: 问题与对策
+  title: 问题与对策
+  kind: text
+  style: 先归纳问题（资源保障程度、共伴生利用、开发秩序、综合利用水平等），再对应给出对策建议，逻辑一一呼应，700~1000 字。
+  data_needs:
+  - 行业共性问题素材
+  - 政策文件与规划要求
+  - 专家综述观点
+  origin: user
+  check: {}
+  heading: 4　主要问题与建议
+  inline: false
+  view_slots: []
+  charts: []
+- id: 环保约束分析
+  title: 环保约束分析
+  kind: text
+  style: 综述萤石选矿废水处理与尾矿处置的环保要求，围绕选矿废水排放标准与回用、尾矿库安全与综合利用等约束，约200字，客观陈述。
+  data_needs:
+  - 选矿废水处理要求
+  - 尾矿处置与综合利用政策
+  origin: user
+  check: {}
+  heading: 5　环保约束分析
+  inline: false
+  view_slots: []
+  charts: []
+- id: 储运与物流约束
+  title: 储运与物流约束
+  kind: text
+  style: 约200字，简明综述式，与报告整体文风一致
+  data_needs:
+  - 萤石 储存 运输 要求
+  - CaF₂ 精矿 潮解 储存条件
+  origin: user
+  check: {}
+  heading: 储运与物流约束
+  inline: false
+  view_slots: []
+  charts: []
+tables:
+- id: tbl_consumption
+  renderer: facts_rows
+  columns: []
+  source_prefix: web
+- id: tbl_new_deposits
+  renderer: facts_rows
+  columns: []
+  source_prefix: rag
+writing_rules:
+- 采用期刊综述文体：客观陈述、文献与数据佐证、避免营销化表述
+- 段落间逻辑衔接，用“研究表明/资料显示”等转述句式
+- 全文总篇幅控制在 6000~8000 字
+- 数据注明年份与口径；矿点信息须具体到矿区名称与发现时间
+forbidden_words: []
+controlled_vocab: {}
+check_rules: []
+industry_keywords: []
+genre: journal

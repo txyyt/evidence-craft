@@ -57,6 +57,13 @@ def tier_for(role: str) -> str | None:
     return (settings.tier_roles or {}).get(role) or None
 
 
+def pipeline_temperature(kind: str) -> float | None:
+    """F5 采样旋钮：settings.pipeline 的 write_temperature / judge_temperature；
+    缺省返回 None（请求不带 temperature，行为与旧版一致）。"""
+    v = (settings.pipeline or {}).get(f"{kind}_temperature")
+    return None if v is None else float(v)
+
+
 def tier_config(tier: str | None) -> dict[str, Any]:
     """档位 → 合并后的模型配置（model 段为基础，档位段只覆盖已配字段）。"""
     m = dict(settings.model)
@@ -96,7 +103,8 @@ def client(tier: str | None = None) -> OpenAI:
 
 
 def chat_json(system: str, user: str, schema_hint: str,
-              max_tokens: int = 8000, tier: str | None = None) -> dict[str, Any]:
+              max_tokens: int = 8000, tier: str | None = None,
+              temperature: float | None = None) -> dict[str, Any]:
     """一次 JSON mode 调用（tier=None 默认档；档位名见 settings.model_tiers）。
 
     推理模型先输出思维链（reasoning_content）再输出正文；若 max_tokens
@@ -113,6 +121,8 @@ def chat_json(system: str, user: str, schema_hint: str,
     # token，约提速 2 倍）；未配置时不传该参数（其他供应商不接受，保持干净）
     extra = {"reasoning_effort": m["reasoning_effort"]} \
         if m.get("reasoning_effort") else None
+    # F5 采样参数通道：显式给出才透传（缺省保持现有行为）
+    temp = {"temperature": temperature} if temperature is not None else {}
     budget = max_tokens
     import time
     for attempt in range(3):
@@ -121,7 +131,8 @@ def chat_json(system: str, user: str, schema_hint: str,
             resp = cl.chat.completions.create(
                 model=m["model"], messages=messages,
                 response_format={"type": "json_object"},
-                max_tokens=budget, **({"extra_body": extra} if extra else {}))
+                max_tokens=budget, **({"extra_body": extra} if extra else {}),
+                **temp)
         except _RETRYABLE:
             # 部分主机偶发超时/限流（实测阿里百炼专属主机 >120s 比例不低）：
             # 指数退避后重试，最后一次把超时原样抛出

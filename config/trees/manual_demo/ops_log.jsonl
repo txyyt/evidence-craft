@@ -1,2 +1,5 @@
 {"ts": "2026-09-14T20:18:49", "actor": "system", "op": {"action": "create"}, "summary": "创建结构树", "version_after": 1, "fingerprint": "5d35143e073b"}
 {"ts": "2026-09-14T20:34:04", "actor": "manual", "op": {"action": "save"}, "summary": "编辑器保存", "version_after": 2, "fingerprint": "47adc723a44d"}
+{"ts": "2026-09-15T00:22:22", "actor": "system", "op": {"action": "migrate_ids", "renamed_from": null, "changes": ["节 id：overview → 综述（标题「综述」）", "节 id：demand_table → 关键数据一览（标题「关键数据一览」）", "补 heading：节「综述」", "补 data_needs：节「综述」", "补 heading：节「关键数据一览」", "补 data_needs：节「关键数据一览」"]}, "summary": "树 id 中文化迁移（V2 §一 §3）", "version_after": 3, "fingerprint": "7824dc5b58b1"}
+{"ts": "2026-09-15T00:46:43", "actor": "agent", "op": {"action": "chat_edit", "ops": [{"action": "update_section", "section_id": "综述", "fields": {"title": "综述概览", "heading": "综述概览"}}]}, "summary": "已将“综述”一节的标题与标题改为“综述概览”。", "version_after": 4, "fingerprint": "073187d6379d"}
+{"ts": "2026-09-15T00:48:11", "actor": "manual", "op": {"action": "save"}, "summary": "编辑器保存", "version_after": 5, "fingerprint": "073187d6379d"}

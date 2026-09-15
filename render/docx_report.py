@@ -16,7 +16,7 @@ from docx.oxml.ns import qn
 from docx.shared import Cm, Pt, RGBColor
 
 from pipeline.sections import render_table_sec
-from render.common import md_table_rows
+from render.common import md_table_rows, split_md_blocks
 from template_factory.schema import SpecV2
 
 FONT = "微软雅黑"
@@ -179,9 +179,20 @@ def render_docx(doc: dict[str, Any], outline: dict[str, Any],
         elif sec.kind == "text":
             t = texts_by_id.get(sec.id)
             if t:
-                for para in t["body"].split("\n"):
-                    if para.strip():
-                        _run(d.add_paragraph(), _clean_genknow(para.strip()))
+                # A1：正文分块——手写 markdown 表格块走表格渲染，其余按段落
+                for bkind, btext in split_md_blocks(t["body"]):
+                    if bkind == "table":
+                        rows, _note = md_table_rows(btext)
+                        if rows:
+                            table_no += 1
+                            p = d.add_paragraph()
+                            p.paragraph_format.keep_with_next = True
+                            _run(p, f"表{table_no}", size=9, bold=True, center=True)
+                            _add_table(d, rows)
+                        continue
+                    for para in btext.split("\n"):
+                        if para.strip():
+                            _run(d.add_paragraph(), _clean_genknow(para.strip()))
         # 图件：figures 章节为图件集，text/views/risk 章节正文后内嵌
         # （范文形态：图随文走），图号全文连续
         _add_charts(charts.get(sec.id))

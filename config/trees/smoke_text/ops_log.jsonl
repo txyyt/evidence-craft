@@ -1,1 +1,6 @@
 {"ts": "2026-09-14T20:05:15", "actor": "system", "op": {"action": "create"}, "summary": "M1 冒烟夹具", "version_after": 1, "fingerprint": "c9ab9d1b233e"}
+{"ts": "2026-09-15T00:22:22", "actor": "system", "op": {"action": "migrate_ids", "renamed_from": null, "changes": ["节 id：background → 背景与现状（标题「背景与现状」）", "节 id：outlook → 展望与建议（标题「展望与建议」）", "补 heading：节「背景与现状」", "补 heading：节「展望与建议」"]}, "summary": "树 id 中文化迁移（V2 §一 §3）", "version_after": 2, "fingerprint": "0a6cd1b7e18b"}
+{"ts": "2026-09-15T10:35:43", "actor": "manual", "op": {"action": "save"}, "summary": "换文风卡测试", "version_after": 3, "fingerprint": "40d11d0b8eb2"}
+{"ts": "2026-09-15T10:35:43", "actor": "manual", "op": {"action": "save"}, "summary": "还原", "version_after": 4, "fingerprint": "24a377d3e591"}
+{"ts": "2026-09-15T13:44:07", "actor": "manual", "op": {"action": "save"}, "summary": "编辑器保存", "version_after": 5, "fingerprint": "88dc143f2068"}
+{"ts": "2026-09-15T13:45:45", "actor": "manual", "op": {"action": "save"}, "summary": "编辑器保存", "version_after": 6, "fingerprint": "24a377d3e591"}

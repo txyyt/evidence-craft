@@ -72,7 +72,7 @@ def _facts_series(doc: dict[str, Any], tpl: ChartTemplate,
     items = [f for f in doc["facts"] if f["id"].startswith(prefix)
              and isinstance(f.get("value"), (int, float))]
     if not items:
-        raise ValueError(f"图 {tpl.id} 无匹配事实：{prefix}*")
+        raise ValueError(f"图 {tpl.id} 无匹配数据事实：{prefix}*")
     labels = [f["name"] for f in items]
     return labels, {tpl.y[0] if tpl.y else tpl.unit or "数值":
                     [float(f["value"]) for f in items]}
@@ -205,11 +205,15 @@ def make_chart(doc: dict[str, Any], tpl: ChartTemplate, out_path: Path) -> Path:
 
 
 def render_charts(doc: dict[str, Any], spec: SpecV2, run_dir: Path,
-                  log) -> dict[str, list[dict[str, str]]]:
+                  log) -> tuple[dict[str, list[dict[str, str]]],
+                                list[dict[str, str]]]:
     """渲染 spec 中所有配置了 charts 的章节（figures 章节为图件集，
-    text 章节可内嵌图）→ {section_id: [{png, caption}]}。
+    text 章节可内嵌图）→ (jobs_by_section, failures)。
+    F2：单图失败不再只在日志一闪而过——失败清单 [{id,title,section,reason}]
+    随返回值上交，由调用方落 meta.json 供详情页治理体检展示。
     单图失败记警告跳过，不阻塞流水线。"""
     out: dict[str, list[dict[str, str]]] = {}
+    failures: list[dict[str, str]] = []
     for sec in spec.sections:
         if not sec.charts:
             continue
@@ -220,6 +224,9 @@ def render_charts(doc: dict[str, Any], spec: SpecV2, run_dir: Path,
                 make_chart(doc, tpl, png)
             except Exception as e:  # noqa: BLE001 —— 单图失败不阻塞
                 log(f"  [警告] 图 {tpl.title} 渲染失败：{e}")
+                failures.append({"id": tpl.id, "title": tpl.title,
+                                 "section": sec.id,
+                                 "reason": f"{type(e).__name__}: {e}"})
                 continue
             caption = tpl.title + (f"（{tpl.note}）" if tpl.note else "")
             # png：绝对路径（docx 嵌入用）；src：文件名（final.html 与图同目录，
@@ -228,4 +235,4 @@ def render_charts(doc: dict[str, Any], spec: SpecV2, run_dir: Path,
                          "caption": caption})
         if jobs:
             out[sec.id] = jobs
-    return out
+    return out, failures

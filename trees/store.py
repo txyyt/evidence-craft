@@ -82,7 +82,7 @@ def load_tree(tree_id: str) -> dict[str, Any]:
     except ValidationError as e:
         raise ValueError(f"结构树 {tree_id} 不符合 Spec v2：{e.errors()[0]}") from e
     return {"meta": meta, "spec": spec, "fingerprint": fingerprint(payload),
-            "path": str(p)}
+            "spec_dict": payload, "path": str(p)}
 
 
 def load_spec_dict(tree_id: str) -> dict[str, Any]:
@@ -98,13 +98,39 @@ def load_spec_dict(tree_id: str) -> dict[str, Any]:
 
 
 def validate_payload(spec_dict: dict[str, Any]) -> SpecV2:
-    """编辑器提交的 spec dict → 校验。失败抛 ValueError（中文摘要）。"""
+    """编辑器提交的 spec dict → 校验。失败抛 ValueError（人话摘要，C2）。"""
     try:
         return SpecV2.model_validate(spec_dict)
     except ValidationError as e:
         first = e.errors()[0]
         loc = ".".join(str(x) for x in first.get("loc") or [])
-        raise ValueError(f"结构不合规（{loc}）：{first.get('msg')}") from e
+        raise ValueError(f"结构不合规（{loc}）：{_friendly_schema_msg(first)}") from e
+
+
+# C2：常见 schema 错误 → 人话（含修复指引）
+_SCHEMA_HINTS = (
+    ("须配置 view_slots 与 n_views", "观点节（views）需要至少一个视角槽位："
+     "在该节下添加视角槽位（每个槽位是一条核心观点的职责说明）"),
+    ("须配置 table 引用", "表格节（table）需要引用一个表格模板："
+     "先在「表格模板」里定义模板 id，再到该节填入该 id"),
+    ("章节 id 重复", "存在重复的节标识（id），请把重复的节改成不同 id"),
+    ("Input should be", "取值不在可选项里（检查节类型/渲染器等下拉值）"),
+    ("Missing", "缺少必填字段（节需要 id 与 title）"),
+    ("unable to interpret", "字段值类型不对（检查数字/文本是否填反）"),
+)
+
+
+def _friendly_schema_msg(err: dict[str, Any]) -> str:
+    msg = str(err.get("msg") or "")
+    ctx = str((err.get("ctx") or {}).get("error") or "")
+    for key, hint in _SCHEMA_HINTS:
+        if key in msg or key in ctx:
+            return f"{msg}——{hint}"
+    return msg
+
+
+class TreeConflict(ValueError):
+    """乐观锁冲突：base_version 与当前版本不一致（B5）。"""
 
 
 def _spec_dump(spec: SpecV2) -> dict[str, Any]:
@@ -115,8 +141,10 @@ def _spec_dump(spec: SpecV2) -> dict[str, Any]:
 def save_tree(tree_id: str, spec_dict: dict[str, Any],
               meta_updates: dict[str, Any] | None = None,
               actor: str = "manual", summary: str = "",
-              op: dict[str, Any] | None = None) -> dict[str, Any]:
-    """校验并保存（版本 +1、快照、日志）。新建（文件不存在）走初始化分支。"""
+              op: dict[str, Any] | None = None,
+              base_version: int | None = None) -> dict[str, Any]:
+    """校验并保存（版本 +1、快照、日志）。新建（文件不存在）走初始化分支。
+    base_version（B5 乐观锁）：给出时须与当前版本一致，否则抛 TreeConflict。"""
     _safe_id(tree_id)
     spec = validate_payload(spec_dict)
     p = tree_path(tree_id)
@@ -134,6 +162,11 @@ def save_tree(tree_id: str, spec_dict: dict[str, Any],
     else:
         old = _read_yaml(p)
         meta = dict(old.pop("tree", {}) or {})
+        if base_version is not None \
+                and int(meta.get("version") or 0) != int(base_version):
+            raise TreeConflict(
+                f"树已被其他页面修改（当前 v{meta.get('version')}，"
+                f"提交基于 v{base_version}），请刷新后重试")
         meta.update({k: v for k, v in (meta_updates or {}).items()
                      if k not in ("id", "created_at")})
     meta["updated_at"] = now
@@ -162,6 +195,7 @@ def _log(tree_id: str, entry: dict[str, Any]) -> None:
 
 def list_trees() -> list[dict[str, Any]]:
     root = settings.resolve("config/trees")
+    from trees.lint import lint       # F4：列表行附 lint 计数（个位数树，成本可忽略）
     out: list[dict[str, Any]] = []
     if not root.exists():
         return out
@@ -173,6 +207,7 @@ def list_trees() -> list[dict[str, Any]]:
         except (ValueError, OSError):
             continue
         meta, spec = loaded["meta"], loaded["spec"]
+        linted = lint(loaded["spec_dict"])
         out.append({
             "id": d.name, "name": meta.get("name") or d.name,
             "subject": meta.get("subject", ""),
@@ -182,6 +217,8 @@ def list_trees() -> list[dict[str, Any]]:
             "n_data_needs": sum(1 for s in spec.sections if s.data_needs),
             "version": meta.get("version", 0),
             "fingerprint": loaded["fingerprint"],
+            "lint": {"errors": len(linted["errors"]),
+                     "warnings": len(linted["warnings"])},
             "updated_at": meta.get("updated_at", ""),
         })
     return out
@@ -251,6 +288,26 @@ def delete_tree(tree_id: str) -> None:
     if not d.exists():
         raise ValueError(f"结构树不存在：{tree_id}")
     shutil.rmtree(d)
+
+
+def copy_tree(tree_id: str) -> dict[str, Any]:
+    """F10 树派生：复制为可编辑草稿（新 id=原名_派生N，provenance 记父树）。"""
+    loaded = load_spec_dict(tree_id)
+    base = f"{tree_id}_派生"
+    n = 1
+    new_id = f"{base}{n}"
+    while exists(new_id):
+        n += 1
+        new_id = f"{base}{n}"
+    meta = {"name": (loaded["meta"].get("name") or tree_id) + f"（派生{n}）",
+            "subject": loaded["meta"].get("subject") or "",
+            "provenance": {"kind": "derived", "parent": tree_id,
+                           "parent_version": loaded["meta"].get("version")}}
+    result = save_tree(new_id, loaded["spec_dict"], meta, actor="system",
+                       summary=f"派生自 {tree_id} v{loaded['meta'].get('version')}",
+                       op={"action": "derive", "parent": tree_id})
+    return {"id": new_id, "version": result["meta"]["version"],
+            "fingerprint": result["fingerprint"]}
 
 
 # ---------- 数据计划（plans/）----------

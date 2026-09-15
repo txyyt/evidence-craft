@@ -91,12 +91,13 @@ def test_parse_clamps_ops():
         feedback.chat_json = real  # parse 内部 from llm import —— 见下注
 
 
-def test_style_round_and_rollback():
+def test_style_round_and_rollback(monkeypatch):
     root = _mk_run()
-    # mock revise 的 chat_json：返回改写后正文
+    # mock revise 的 chat_json：返回改写后正文（monkeypatch 保证恢复，防污染后续测试）
     import pipeline.revise as revise_mod
-    revise_mod.chat_json = lambda *a, **k: {"body": "引言改写后的新稿。",
-                                            "cited_fact_ids": []}
+    monkeypatch.setattr(revise_mod, "chat_json",
+                        lambda *a, **k: {"body": "引言改写后的新稿。",
+                                         "cited_fact_ids": []})
     ops = [{"target": "intro", "kind": "style", "action": "rewrite",
             "instruction": "更精炼"}]
     entry = feedback.apply(root, ops, "引言更精炼")
@@ -114,12 +115,13 @@ def test_style_round_and_rollback():
     assert ledger[-1]["rolled_back"] is True
 
 
-def test_structure_round_dirty_region():
+def test_structure_round_dirty_region(monkeypatch):
     root = _mk_run()
     import pipeline.sections as sections_mod
-    sections_mod.gen_text_section = lambda doc, sec, plan, spec: {
-        "body": f"{sec.title}新生成正文。", "section_id": sec.id,
-        "cited_fact_ids": []}
+    monkeypatch.setattr(sections_mod, "gen_text_section",
+                        lambda doc, sec, plan, spec: {
+                            "body": f"{sec.title}新生成正文。",
+                            "section_id": sec.id, "cited_fact_ids": []})
     ops = [{"target": "global", "kind": "structure", "action": "add_section",
             "instruction": "加一节政策",
             "section": {"id": "policy", "title": "政策", "kind": "text",
@@ -133,20 +135,16 @@ def test_structure_round_dirty_region():
     spec = tree_store.load_tree(TID)["spec"]
     assert spec.section_by_id("policy") is not None        # 树同步更新
     assert tree_store.ops_log(TID)[-1]["actor"] == "agent"
-    # 清理 monkeypatch
-    from pipeline.sections import gen_text_section as real_gen  # 已被替换
-    import importlib
-    importlib.reload(sections_mod)
 
 
-def test_judge_deep_writes_report():
+def test_judge_deep_writes_report(monkeypatch):
     root = _mk_run()
     import pipeline.judge as judge_mod
-    judge_mod.chat_json = lambda *a, **k: {
+    monkeypatch.setattr(judge_mod, "chat_json", lambda *a, **k: {
         "scores": {k: {"score": 8, "comment": "ok"} for k in
                    ("structure", "professionalism", "data_support",
                     "compliance", "readability")},
-        "total": 40, "verdict": "pass", "issues": []}
+        "total": 40, "verdict": "pass", "issues": []})
     out = feedback.judge_deep(root)
     assert out["verdict"] == "pass"
     assert json.loads((root / "judge_report.json").read_text(
@@ -154,13 +152,14 @@ def test_judge_deep_writes_report():
     _cleanup()
 
 
-def test_structure_chinese_id_title_fallback():
+def test_structure_chinese_id_title_fallback(monkeypatch):
     """路由给中文 section.id 时（_apply_ops 会改写 id），按标题兜底重生成正文。"""
     root = _mk_run()
     import pipeline.sections as sections_mod
-    sections_mod.gen_text_section = lambda doc, sec, plan, spec: {
-        "body": f"{sec.title}生成内容。", "section_id": sec.id,
-        "cited_fact_ids": []}
+    monkeypatch.setattr(sections_mod, "gen_text_section",
+                        lambda doc, sec, plan, spec: {
+                            "body": f"{sec.title}生成内容。",
+                            "section_id": sec.id, "cited_fact_ids": []})
     ops = [{"target": "global", "kind": "structure", "action": "add_section",
             "instruction": "加一节",
             "section": {"id": "储运与物流约束", "title": "储运约束", "kind": "text",
