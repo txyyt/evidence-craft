@@ -30,7 +30,9 @@ _COLORS = ["#4C78A8", "#F58518", "#E45756", "#72B7B2", "#54A24B",
 
 
 def _font() -> None:
-    plt.rcParams["font.family"] = ["Microsoft YaHei", "SimHei"]
+    # Windows 与 Linux 服务器字体都兜住（matplotlib 自动跳过缺失项）
+    plt.rcParams["font.family"] = ["Microsoft YaHei", "SimHei",
+                                   "Noto Sans CJK SC", "WenQuanYi Micro Hei"]
     plt.rcParams["axes.unicode_minus"] = False
 
 

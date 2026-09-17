@@ -88,7 +88,9 @@ def make_chart(secid: str, out_path: Path, bars: int = 60) -> Path:
     closes = [r["close"] for r in raw]
     x = list(range(len(raw)))
 
-    plt.rcParams["font.family"] = ["Microsoft YaHei", "SimHei"]
+    # Windows 与 Linux 服务器字体都兜住（matplotlib 自动跳过缺失项）
+    plt.rcParams["font.family"] = ["Microsoft YaHei", "SimHei",
+                                   "Noto Sans CJK SC", "WenQuanYi Micro Hei"]
     fig, (ax1, ax2) = plt.subplots(
         2, 1, figsize=(10, 5.2), dpi=150, sharex=True,
         gridspec_kw={"height_ratios": [3.2, 1], "hspace": 0.06})
