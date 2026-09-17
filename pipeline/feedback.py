@@ -468,27 +468,68 @@ def apply(run_dir: Path, ops: list[dict[str, Any]], text: str,
 
 # ---------- 轮次 / 回滚 / 深度评审 ----------
 
+class RollbackConflict(Exception):
+    """V4-08：目标轮不可回滚（不存在 / 已被回滚 / 是回滚记录本身 / 无快照）。"""
+
+
+def assert_rollback_allowed(run_dir: Path, round_no: int) -> None:
+    """回滚预检（V4-08）：不可回滚时抛 RollbackConflict——
+    端点层据此返回 409；rollback() 写账本前再查一次，防并发双击重复追加。"""
+    run_dir = Path(run_dir)
+    n = int(round_no)
+    ledger = read_ledger(run_dir)
+    if not any(e.get("round") == n and not e.get("rollback_of")
+               for e in ledger):
+        raise RollbackConflict(f"第 {n} 轮不存在或不是可回滚的修改轮")
+    rolled_targets = {e.get("rollback_of") for e in ledger
+                      if e.get("rollback_of")}
+    if n in rolled_targets:
+        raise RollbackConflict(f"第 {n} 轮已被回滚，不能重复回滚")
+    if not (run_dir / "rounds" / str(n) / "prev_sections.json").exists():
+        raise RollbackConflict(f"第 {n} 轮没有轮前快照，无法回滚")
+
+
 def rounds(run_dir: Path) -> list[dict[str, Any]]:
-    """轮次列表：rounds/<n>/ 目录 ∪ 台账轮号（回滚条目无目录也要可见）。"""
+    """轮次列表：rounds/<n>/ 目录 ∪ 台账轮号（回滚条目无目录也要可见）。
+    V4-08：每条增量返回 kind（apply|rollback）、target_round（回滚记录指向的
+    目标轮）、rolled_back（该修改轮是否已被有效回滚）——从台账确定性推导，
+    旧账本已有的重复回滚照实展示，不改写历史文件。"""
     run_dir = Path(run_dir)
     rd = run_dir / "rounds"
+    ledger = read_ledger(run_dir)
     out: dict[int, dict[str, Any]] = {}
     if rd.exists():
         for d in rd.iterdir():
             if d.is_dir() and d.name.isdigit():
                 out[int(d.name)] = {"round": int(d.name),
                                     "has_diff": (d / "diff.json").exists()}
-    for e in read_ledger(run_dir):
+    for e in ledger:
         n = e.get("round")
         if isinstance(n, int) and n not in out:
             out[n] = {"round": n, "has_diff": False}
+    rolled_targets = {e.get("rollback_of") for e in ledger
+                      if e.get("rollback_of")}
     for entry in out.values():
-        match = [e for e in read_ledger(run_dir)
-                 if e.get("round") == entry["round"]]
+        n = entry["round"]
+        # 同轮多条记录（历史重复回滚等）：取第一条非回滚记录展示原文；
+        # 回滚记录（round=新号、rollback_of=目标）单独标 kind=rollback
+        match = [e for e in ledger
+                 if e.get("round") == n and not e.get("rollback_of")]
+        rb_of = [e.get("rollback_of") for e in ledger
+                 if e.get("round") == n and e.get("rollback_of")]
+        if rb_of:
+            entry["kind"] = "rollback"
+            entry["target_round"] = rb_of[0]
+            entry["rolled_back"] = True
+            m = [e for e in ledger if e.get("round") == n]
+            entry["text"] = m[0].get("text")
+            continue
+        entry["kind"] = "apply" if match else None
+        entry["target_round"] = None
+        entry["rolled_back"] = n in rolled_targets
         if match:
             entry.update({"text": match[0].get("text"),
-                          "applied": match[0].get("applied"),
-                          "rolled_back": match[0].get("rolled_back")})
+                          "applied": match[0].get("applied")})
             # C3：当轮对账/校验状态上界面
             entry["reconcile"] = match[0].get("reconcile")
             entry["validate"] = match[0].get("validate")
@@ -512,9 +553,12 @@ def read_ledger(run_dir: Path) -> list[dict[str, Any]]:
 
 
 def rollback(run_dir: Path, round_no: int, progress=None) -> dict[str, Any]:
-    """撤销第 round_no 轮：恢复该轮 prev_* 快照并重渲染（树改动用树版本链回）。"""
+    """撤销第 round_no 轮：恢复该轮 prev_* 快照并重渲染（树改动用树版本链回）。
+    V4-08：写账本前复查防重（预检在端点层已做 409；这里兜并发双击）——
+    目标已被有效回滚 / 是回滚记录 / 无快照时抛 RollbackConflict，不追加账本。"""
     progress = progress or (lambda *a: None)
     run_dir = Path(run_dir)
+    assert_rollback_allowed(run_dir, round_no)
     src = run_dir / "rounds" / str(int(round_no))
     if int(round_no) < 1 or not (src / "prev_sections.json").exists():
         raise ValueError(f"第 {round_no} 轮没有轮前快照可回滚")

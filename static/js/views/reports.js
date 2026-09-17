@@ -1,5 +1,5 @@
 /* 报告库（V2 §三 §2）：全部运行统一列表（树模式 + 历史经典报告）。
-   列＝时间｜来源｜标题｜judge｜verdict（FAIL 标红）｜操作（详情/删除）；
+   列＝时间｜来源｜标题｜报告评审分数｜评审结论（需修改标红）｜操作（详情/删除）；
    来源筛选、统计摘要、顶部「+ 新建报告」。反馈入口在详情页内。 */
 (function () {
   const { ref, computed, onMounted } = Vue;
@@ -24,6 +24,29 @@
         }
         onMounted(load);
 
+        /* ---- V4-02：运行中区（消费全局任务中心；完成自动刷新一次列表） ---- */
+        const runningTasks = ref([]);
+        const refreshedFor = new Set();
+        EC.tasks.subscribe((list) => {
+          runningTasks.value = list.filter((t) => t.status === 'running');
+          for (const t of list) {
+            if (t.status === 'done' && t.kind === 'run' && !refreshedFor.has(t.id)) {
+              refreshedFor.add(t.id);
+              load();   // 完成后自动刷新一次，不强制跳页
+            }
+          }
+        });
+        function goTask(t) {
+          if (t.artifactDir) location.hash = '/reports/' + encodeURIComponent(t.artifactDir);
+          else if (t.returnRoute) location.hash = t.returnRoute;
+        }
+        async function cancelTask(t) {
+          try {
+            await EC.api.post('/api/jobs/' + encodeURIComponent(t.id) + '/cancel', {});
+            EC.toast('已请求取消', 'info');
+          } catch (e) { EC.toast(e.message, 'error'); }
+        }
+
         const sourceOptions = computed(() => {
           const seen = new Map();
           for (const r of rows.value) {
@@ -34,9 +57,37 @@
           return [{ label: '全部来源', value: null },
                   ...[...seen.entries()].map(([k, v]) => ({ label: v, value: k }))];
         });
-        const filtered = computed(() => filter.value
-          ? rows.value.filter((r) => (r.tree_id || r.type_id) === filter.value)
-          : rows.value);
+        // V4-13：标题/目录搜索 + 治理状态 + 流程 三组筛选前端组合
+        const query = ref('');
+        const verdictFilter = ref(null);   // null 全部 | 'fail' 需修改 | 'pass' 已达标 | 'none' 未评审
+        const flowFilter = ref(null);      // null 全部 | 'tree' | 'classic'
+        const verdictOptions = [
+          { label: '全部评审结论', value: null },
+          { label: '需修改', value: 'fail' },
+          { label: '已达标', value: 'pass' },
+          { label: '未评审', value: 'none' },
+        ];
+        const flowOptions = [
+          { label: '全部流程', value: null },
+          { label: '结构树流程', value: 'tree' },
+          { label: '经典报告', value: 'classic' },
+        ];
+        const filtered = computed(() => {
+          let arr = rows.value;
+          const q = query.value.trim().toLowerCase();
+          if (q) arr = arr.filter((r) =>
+            String(r.title || '').toLowerCase().includes(q)
+            || String(r.dir || '').toLowerCase().includes(q)
+            || String(r.source_name || '').toLowerCase().includes(q));
+          if (filter.value)
+            arr = arr.filter((r) => (r.tree_id || r.type_id) === filter.value);
+          if (flowFilter.value === 'tree') arr = arr.filter((r) => r.tree_id);
+          else if (flowFilter.value === 'classic') arr = arr.filter((r) => !r.tree_id);
+          if (verdictFilter.value === 'fail') arr = arr.filter((r) => r.verdict === 'fail');
+          else if (verdictFilter.value === 'pass') arr = arr.filter((r) => r.verdict === 'pass');
+          else if (verdictFilter.value === 'none') arr = arr.filter((r) => !r.verdict);
+          return arr;
+        });
         const stats = computed(() => ({
           total: rows.value.length,
           tree: rows.value.filter((r) => r.tree_id).length,
@@ -62,12 +113,13 @@
           { title: '来源', key: 'source_name', width: 150, ellipsis: { tooltip: true },
             render: (r) => r.source_name || r.type_name || '—' },
           { title: '标题', key: 'title', ellipsis: { tooltip: true } },
-          { title: 'judge', key: 'judge_total', width: 70,
+          { title: '报告评审', key: 'judge_total', width: 80,
             render: (r) => r.judge_total == null ? '—' : String(r.judge_total) },
-          { title: '判定', key: 'verdict', width: 85,
+          { title: '评审结论', key: 'verdict', width: 95,
             render: (r) => r.verdict
-              ? h(NA.NTag, { size: 'small', type: r.verdict === 'pass' ? 'success' : 'error' },
-                  { default: () => r.verdict.toUpperCase() }) : '—' },
+              ? h(NA.NTag, { size: 'small', type: r.verdict === 'pass' ? 'success' : 'error',
+                             title: 'verdict = ' + r.verdict },
+                  { default: () => EC.verdictLabel(r.verdict) }) : '—' },
           { title: '操作', key: 'op', width: 130,
             render: (r) => h('n-space', { size: 'small' }, {
               default: () => [
@@ -78,26 +130,60 @@
               ] }) },
         ];
 
+        // 自动化观测缝（仅挂内存引用，无 UI 影响）
+        EC._reportsView = { rows, filtered, query, verdictFilter, flowFilter,
+          runningTasks, load };
+
         return { rows, loading, filter, sourceOptions, filtered, stats,
-                 cols, goNew, goDetail, reload: load, icoPlus: EC.ic.plus(15) };
+                 query, verdictFilter, flowFilter, verdictOptions, flowOptions,
+                 cols, goNew, goDetail, reload: load, icoPlus: EC.ic.plus(15),
+                 runningTasks, goTask, cancelTask,
+                 kindLabel: (k) => EC.tasks.kindLabel(k),
+                 stageLabel: (s) => EC.tasks.stageLabel(s) };
       },
       template: `
         <n-spin :show="loading">
+          <!-- V4-02：运行中区（跨页任务；完成自动刷新列表不跳页） -->
+          <n-card v-if="runningTasks.length" size="small" class="ec-card"
+                  style="margin-bottom:12px" data-testid="running-zone">
+            <template #header>进行中的任务</template>
+            <div v-for="t in runningTasks" :key="t.id"
+                 style="display:flex;align-items:center;gap:10px;padding:4px 0;font-size:13px">
+              <n-spin :size="14" />
+              <b>{{ kindLabel(t.kind) }}</b>
+              <span class="ec-muted">｜<span data-testid="task-stage">{{ stageLabel(t.stage) }}</span>
+                ｜{{ t.treeName || '' }}
+                <span v-if="t.message">｜{{ String(t.message).slice(0, 40) }}</span>
+                ｜离开此页任务会继续</span>
+              <span style="flex:1"></span>
+              <n-button size="tiny" data-testid="task-cancel" @click="cancelTask(t)">取消</n-button>
+              <n-button v-if="t.artifactDir || t.returnRoute" size="tiny" type="primary"
+                        data-testid="task-view" @click="goTask(t)">查看</n-button>
+            </div>
+          </n-card>
           <n-card size="small" class="ec-card" style="margin-bottom:12px">
             <n-space align="center" justify="space-between">
               <n-space align="center" size="large">
                 <n-statistic label="报告总数" :value="stats.total" />
-                <n-statistic label="树模式" :value="stats.tree" />
+                <n-statistic label="结构树流程" :value="stats.tree" />
                 <n-statistic label="经典报告" :value="stats.classic" />
-                <n-statistic label="FAIL">
+                <n-statistic label="需修改">
                   <template #default>
                     <span :style="stats.fail ? 'color:#d03050;font-weight:600' : ''">{{ stats.fail }}</span>
                   </template>
                 </n-statistic>
               </n-space>
               <n-space align="center">
+                <n-input v-model:value="query" size="small" clearable
+                         :input-props="{ 'aria-label': '搜索报告' }"
+                         placeholder="搜索标题 / 目录…" style="width:170px"
+                         data-testid="report-search" />
+                <n-select v-model:value="verdictFilter" :options="verdictOptions" size="small"
+                          style="width:140px" data-testid="verdict-filter" />
+                <n-select v-model:value="flowFilter" :options="flowOptions" size="small"
+                          style="width:130px" data-testid="flow-filter" />
                 <n-select v-model:value="filter" :options="sourceOptions" size="small"
-                          style="width:200px" placeholder="来源筛选" clearable />
+                          style="width:170px" placeholder="来源筛选" clearable />
                 <n-button type="primary" @click="goNew">
                   <template #icon><span v-html="icoPlus"></span></template>
                   新建报告</n-button>
@@ -106,6 +192,11 @@
             </n-space>
           </n-card>
           <n-card size="small" class="ec-card">
+            <template #header>
+              报告列表
+              <span class="ec-muted" style="font-size:12px;margin-left:8px" data-testid="filter-count">
+                显示 {{ filtered.length }} / 共 {{ rows.length }} 条</span>
+            </template>
             <n-data-table :columns="cols" :data="filtered" size="small"
                           :row-key="(r) => r.dir"
                           :row-class-name="(r) => r.verdict === 'fail' ? 'ec-row-fail' : ''"

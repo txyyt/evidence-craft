@@ -44,6 +44,17 @@ def fingerprint(payload: dict[str, Any]) -> str:
                    default=str).encode("utf-8")).hexdigest()[:12]
 
 
+def plan_fingerprint(plan: dict[str, Any]) -> str:
+    """V4-03/07：计划内容指纹（取数相关字段，不含确认状态/裁决记录等
+    易变字段）。E6：file_bindings 必须入指纹——换 Excel 不换查询时吃旧缓存。
+    routes_trees 的预检缓存与 run_pipeline 的 meta 记录共用此实现。"""
+    fp_src = {k: plan.get(k) for k in ("rag", "web", "db", "tables_kept",
+                                       "corpus", "mode", "file_bindings")}
+    return hashlib.sha256(
+        json.dumps(fp_src, ensure_ascii=False, sort_keys=True,
+                   default=str).encode("utf-8")).hexdigest()[:16]
+
+
 def synthetic_sources(meta: dict[str, Any], spec: SpecV2) -> dict[str, Any]:
     """树 → 合成 sources dict（run_pipeline/planner 消费的形状：无静态绑定，
     取数全靠 planner 现场计划或 --plan 文件）。"""

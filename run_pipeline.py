@@ -88,6 +88,32 @@ def route_structure_issues(doc: dict[str, Any], spec, texts, notes,
     return to_rewrite, handled
 
 
+def _safe_artifact_name(subject: str) -> str:
+    """subject → 磁盘目录名（V4-01，P1）：清洗 Windows 禁止字符与路径分隔符。
+    报告展示标题继续用原始 subject（meta.params.project / outline.title 不受影响）；
+    这里只负责产物目录落在 artifacts/ 直接子目录。"""
+    import re
+    s = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "-", str(subject))
+    s = re.sub(r"-{2,}", "-", s).strip(" .-")
+    if not s:
+        s = "report"
+    # 目录名 UTF-8 字节上限（时间戳 16 字符另计，整路径留足余量防 MAX_PATH）
+    while len(s.encode("utf-8")) > 160:
+        s = s[:-1].rstrip(" .-")
+    return s or "report"
+
+
+def _meta_plan_fingerprint(plan: dict | None):
+    """V4-07：meta.json 记录计划内容指纹（容错——指纹失败不阻塞生成）。"""
+    try:
+        if not plan:
+            return None
+        from trees.store import plan_fingerprint
+        return plan_fingerprint(plan)
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def main(argv: list[str] | None = None,
          progress: Callable[[str, str, dict | None], None] | None = None,
          cancel_event=None) -> None:
@@ -183,7 +209,7 @@ def main(argv: list[str] | None = None,
 
     subject = run_params.get("project") or run_params.get("stock") or args.type_id
     run_dir = settings.resolve(settings.artifacts_dir) / \
-        f"{subject}_{datetime.now():%Y%m%d_%H%M%S}"
+        f"{_safe_artifact_name(subject)}_{datetime.now():%Y%m%d_%H%M%S}"
     run_dir.mkdir(parents=True, exist_ok=True)
 
     emit("data", f"[1/6] 数据层：按报告类型「{sources.get('name', args.type_id)}」绑定拉取 {subject} 数据 ...")
@@ -307,6 +333,11 @@ def main(argv: list[str] | None = None,
         "tree_id": args.tree,
         "tree_version": (tree_meta or {}).get("version"),
         "tree_fingerprint": tree_fp,
+        # V4-07：数据复用回环——计划文件、计划内容指纹、事实数与数据生成时刻
+        "plan_file": args.plan,
+        "plan_fingerprint": _meta_plan_fingerprint(plan) if (args.tree and plan) else None,
+        "facts_count": len(doc["facts"]),
+        "data_generated_at": datetime.now().isoformat(timespec="seconds"),
         "style_card": spec.style_card,
         "intent": doc["meta"].get("intent"),
         "plan_mode": (plan or {}).get("mode"),

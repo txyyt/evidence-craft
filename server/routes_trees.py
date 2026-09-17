@@ -5,6 +5,8 @@
 """
 
 import asyncio
+import json
+from datetime import datetime
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
@@ -12,12 +14,14 @@ from pydantic import BaseModel, Field
 from server import bus
 from trees import lint as tree_lint
 from trees import store as tree_store
+from trees.store import plan_fingerprint  # noqa: F401 —— V4-03：re-export 供测试/前端契约
 
 router = APIRouter(prefix="/api/trees")
 
 
 class TreeNewIn(BaseModel):
-    id: str
+    # V4-10：id 可省略（后端从名称派生，冲突加短序号）；显式 id 创建不受影响
+    id: str | None = None
     name: str
     subject: str = ""
     description: str = ""
@@ -188,12 +192,27 @@ def list_trees() -> list[dict]:
 
 @router.post("")
 def create_tree(body: TreeNewIn) -> dict:
-    if tree_store.exists(body.id):
-        raise HTTPException(409, f"结构树 id 已存在：{body.id}")
+    # V4-10：id 省略时由名称派生候选 id（ASCII 词 snake_case；纯中文回退 tree_），
+    # 冲突追加短序号 -2/-3…；显式 id 冲突仍 409（旧行为不变）
+    import re as _re
+    tid = body.id
+    if tid is not None and not str(tid).strip():
+        tid = None
+    if tid is None:
+        words = _re.findall(r"[A-Za-z0-9]+", body.name)
+        base = "_".join(w.lower() for w in words)[:40].strip("_") \
+            or f"tree_{datetime.now():%Y%m%d}"
+        tid = base
+        n = 2
+        while tree_store.exists(tid):
+            tid = f"{base}-{n}"
+            n += 1
+    if tree_store.exists(tid):
+        raise HTTPException(409, f"结构树 id 已存在：{tid}")
     spec_dict = body.spec_dict or {}
     if not spec_dict:
         spec_dict = {**_DEFAULT_SPEC,
-                     "report_type": _DEFAULT_SPEC["report_type"].format(id=body.id),
+                     "report_type": _DEFAULT_SPEC["report_type"].format(id=tid),
                      "description": body.description
                      or f"{body.name}（对话式生成）"}
     meta = {"name": body.name, "subject": body.subject or body.name,
@@ -202,11 +221,11 @@ def create_tree(body: TreeNewIn) -> dict:
         if getattr(body, k):
             spec_dict[k] = getattr(body, k)
     try:
-        result = tree_store.save_tree(body.id, spec_dict, meta,
+        result = tree_store.save_tree(tid, spec_dict, meta,
                                       actor="system", summary="创建结构树")
     except ValueError as e:
         raise HTTPException(422, str(e))
-    return {"ok": True, "id": body.id, "version": result["meta"]["version"],
+    return {"ok": True, "id": tid, "version": result["meta"]["version"],
             "fingerprint": result["fingerprint"]}
 
 
@@ -376,6 +395,12 @@ async def plan_start(tree_id: str, body: PlanStartIn) -> dict:
                          body.folder or None, needs=needs or None)
         if body.folder and not (plan.get("corpus") or {}).get("fragments_rel"):
             progress("plan", "警告：资料文件夹未产出语料", None)
+        # V4-03：计划快照当时树版本与稳定指纹（计划复用的匹配依据）
+        plan["tree_version"] = meta.get("version")
+        plan["tree_fingerprint"] = loaded["fingerprint"]
+        plan["focus"] = intent
+        if body.folder:
+            plan["folder"] = body.folder
         name = tree_store.save_plan(tree_id, plan)
         progress("plan", f"计划已保存 {name}", {"plan_file": name, "plan": plan})
         return {"plan_file": name, "plan": plan}
@@ -432,23 +457,12 @@ class PlanPreviewIn(BaseModel):
     plan_file: str
 
 
-@router.post("/{tree_id}/plan/preview")
-async def plan_preview(tree_id: str, body: PlanPreviewIn) -> dict:
-    """F9 树模式数据预检：按计划只跑数据层（分钟级），返回事实数/来源分布/
-    样本事实。计划内容指纹一致时直接复用上次预检结果（避免重复烧调用）。
-    须为 async def：数据层跑在线程里，不阻塞事件循环。"""
-    import asyncio
-    import hashlib
+def _preview_core(tree_id: str, plan_file: str, progress=None) -> dict:
+    """V4-02：预检核心（同步/后台两用）。指纹一致复用缓存；跑数据层；
+    返回事实数/来源分布/样本/警告。progress 可选（后台模式回报进度）。"""
     import json as _json
-    if not tree_store.exists(tree_id):
-        raise HTTPException(404, f"结构树不存在：{tree_id}")
-    plan = tree_store.load_plan(tree_id, body.plan_file)
-    # 内容指纹：取数相关字段（不含确认状态/裁决记录等易变字段）
-    # E6：file_bindings 必须入指纹——换 Excel 不换查询时吃旧缓存（P7）
-    fp_src = {k: plan.get(k) for k in ("rag", "web", "db", "tables_kept",
-                                       "corpus", "mode", "file_bindings")}
-    fp = hashlib.sha256(_json.dumps(fp_src, ensure_ascii=False, sort_keys=True,
-                                    default=str).encode("utf-8")).hexdigest()[:16]
+    plan = tree_store.load_plan(tree_id, plan_file)
+    fp = plan_fingerprint(plan)
     cache = tree_store.tree_dir(tree_id) / "plans" / f"_preview_{fp}.json"
     if cache.exists():
         try:
@@ -482,10 +496,14 @@ async def plan_preview(tree_id: str, body: PlanPreviewIn) -> dict:
                 "error": None if doc["facts"] else "计划执行后 0 事实（检查查询/语料）",
                 "cached": False}
 
+    if progress is not None:
+        progress("preview", "按计划跑数据层（预检）...", {"fingerprint": fp})
     try:
-        result = await asyncio.to_thread(_run)
+        result = _run()
     except FileNotFoundError as e:
         raise HTTPException(422, f"数据文件不存在：{e}")
+    except HTTPException:
+        raise
     except Exception as e:  # noqa: BLE001 —— 预检就是把问题提前报出来
         raise HTTPException(502, f"预检失败：{type(e).__name__}: {e}")
     result["fingerprint"] = fp
@@ -493,6 +511,34 @@ async def plan_preview(tree_id: str, body: PlanPreviewIn) -> dict:
     cache.write_text(_json.dumps(result, ensure_ascii=False, indent=2),
                      encoding="utf-8")
     return result
+
+
+@router.post("/{tree_id}/plan/preview")
+async def plan_preview(tree_id: str, body: PlanPreviewIn) -> dict:
+    """F9 树模式数据预检（同步版，保留兼容——V4-02 新增 /start 后台版）。
+    须为 async def：数据层跑在线程里，不阻塞事件循环。"""
+    if not tree_store.exists(tree_id):
+        raise HTTPException(404, f"结构树不存在：{tree_id}")
+    import asyncio
+    return await asyncio.to_thread(_preview_core, tree_id, body.plan_file)
+
+
+@router.post("/{tree_id}/plan/preview/start")
+async def plan_preview_start(tree_id: str, body: PlanPreviewIn) -> dict:
+    """V4-02：预检后台化——同一核心跑在 job 里，返回 {id, events_url}。
+    前端经任务中心跨页跟踪；同步端点保留不变。"""
+    if not tree_store.exists(tree_id):
+        raise HTTPException(404, f"结构树不存在：{tree_id}")
+    _check = _preview_core   # 引用校验（防拼写）；实际执行在 fn 内
+
+    def fn(progress) -> dict:
+        result = _preview_core(tree_id, body.plan_file, progress=progress)
+        progress("preview", "预检完成", result)
+        return result
+
+    task = bus.start_job(fn, f"preview-{tree_id}", asyncio.get_running_loop())
+    return {"id": task.id,
+            "events_url": f"/api/trees/{tree_id}/jobs/{task.id}/events"}
 
 
 @router.get("/{tree_id}/plans/{plan_name}")
@@ -506,7 +552,10 @@ def tree_plan_content(tree_id: str, plan_name: str) -> dict:
 
 @router.get("/{tree_id}/plans")
 def tree_plans(tree_id: str) -> list[dict]:
-    """树目录 plans/ 下的数据计划文件列表（生成入口选择沿用）。"""
+    """树目录 plans/ 下的数据计划文件列表（生成入口选择沿用）。
+    V4-03 增量字段（读不到旧字段返回 null，不报错）：confirmed / gap_count /
+    qualitative_count / tree_version / tree_fingerprint / focus / folder /
+    preview_cached。"""
     if not tree_store.exists(tree_id):
         raise HTTPException(404, f"结构树不存在：{tree_id}")
     d = tree_store.tree_dir(tree_id) / "plans"
@@ -514,8 +563,36 @@ def tree_plans(tree_id: str) -> list[dict]:
     if d.exists():
         for f in sorted(d.glob("*.json"), key=lambda x: x.stat().st_mtime,
                         reverse=True):
-            out.append({"name": f.name, "size": f.stat().st_size,
-                        "mtime": f.stat().st_mtime})
+            if f.name.startswith("_preview_"):
+                continue
+            entry = {"name": f.name, "size": f.stat().st_size,
+                     "mtime": f.stat().st_mtime,
+                     "confirmed": None, "gap_count": None,
+                     "qualitative_count": None, "tree_version": None,
+                     "tree_fingerprint": None, "focus": None, "folder": None,
+                     "preview_cached": None}
+            try:
+                plan = json.loads(f.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                out.append(entry)
+                continue
+            if isinstance(plan, dict):
+                cov = plan.get("needs_coverage") or []
+                entry["confirmed"] = bool(plan.get("confirmed")) \
+                    if plan.get("confirmed") is not None else None
+                entry["gap_count"] = sum(1 for c in cov
+                                         if isinstance(c, dict)
+                                         and c.get("status") == "gap")
+                entry["qualitative_count"] = sum(
+                    1 for c in cov if isinstance(c, dict)
+                    and c.get("decision") == "qualitative")
+                entry["tree_version"] = plan.get("tree_version")
+                entry["tree_fingerprint"] = plan.get("tree_fingerprint")
+                entry["focus"] = plan.get("focus")
+                entry["folder"] = plan.get("folder")
+                fp = plan_fingerprint(plan)
+                entry["preview_cached"] = (d / f"_preview_{fp}.json").exists()
+            out.append(entry)
     return out
 
 

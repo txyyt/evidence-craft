@@ -72,9 +72,14 @@ class RunTask:
             self.queues.discard(q)
 
     def _end_event(self) -> dict[str, Any]:
+        # V4-01：artifact_dir = 产物目录 basename（前端直接可跳；run_dir 保留兼容旧消费者）
+        # V4-02：end 事件增量带 result（job 返回值；旧消费者忽略新字段）
         return {"type": "end", "status": self.status,
-                "run_dir": self.run_dir, "error": self.error,
-                "error_detail": self.error_detail}
+                "run_dir": self.run_dir,
+                "artifact_dir": Path(self.run_dir).name if self.run_dir else None,
+                "error": self.error,
+                "error_detail": self.error_detail,
+                "result": self.result if self.status == "done" else None}
 
 
 HUB: dict[str, RunTask] = {}
@@ -131,12 +136,22 @@ def start_job(fn, label: str, loop: asyncio.AbstractEventLoop) -> RunTask:
 
     def worker() -> None:
         try:
+            # V4-02：协作取消——fn 可经 progress.cancel_event 检查取消请求
+            progress.cancel_event = task.cancel_event
             task.result = fn(progress)
-            task.status = "done"
-        except BaseException:  # noqa: BLE001
-            task.status = "error"
-            task.error_detail = traceback.format_exc(limit=8)
-            task.error = _humanize(task.error_detail)
+            if task.cancel_event.is_set() and task.status == "running":
+                task.status = "cancelled"
+                task.error = "用户取消"
+            else:
+                task.status = "done"
+        except BaseException as e:  # noqa: BLE001
+            if type(e).__name__ == "PipelineCancelled":
+                task.status = "cancelled"
+                task.error = "用户取消"
+            else:
+                task.status = "error"
+                task.error_detail = traceback.format_exc(limit=8)
+                task.error = _humanize(task.error_detail)
         finally:
             task.emit(task._end_event())
 
@@ -176,6 +191,7 @@ def summarize(run_dir: Path) -> dict[str, Any]:
 
     entry: dict[str, Any] = {
         "name": run_dir.name, "dir": run_dir.name,
+        "artifact_dir": run_dir.name,   # V4-01：与 dir 同值，供新前端统一消费
         "mtime": datetime.fromtimestamp(run_dir.stat().st_mtime)
         .isoformat(timespec="seconds"),
         "has_html": (run_dir / "final.html").exists(),

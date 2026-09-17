@@ -12,6 +12,8 @@ from datalayer.settings import settings
 from server import bus
 
 router = APIRouter(prefix="/api/runs")
+# V4-02：通用任务查询/取消（run 与 job 都登记在 bus.HUB，统一从这查）
+jobs_router = APIRouter(prefix="/api/jobs")
 
 
 class RunIn(BaseModel):
@@ -34,6 +36,10 @@ class TreeRunIn(BaseModel):
     folder: str | None = None      # 本地资料文件夹（现场建语料库）
     plan: str | None = None        # 沿用树目录 plans/ 下的采集计划
     model_tier: str | None = None
+    # V4-07：复用某次产物目录的数据层结果（等价 --reuse-data）。
+    # 只接受 artifacts/ 直接子目录名；后端重新校验 facts/计划/门禁，
+    # 不由前端布尔值或路径直接放行。
+    reuse_data_from: str | None = None
 
 
 class PreviewIn(BaseModel):
@@ -98,6 +104,16 @@ async def from_tree(body: TreeRunIn) -> dict:
                                 + "、".join(gate["unresolved"][:5]))
         if plan.get("needs_folder") and not body.folder:
             raise HTTPException(422, "该计划有缺口裁决为『我提供资料』，请填写本地资料文件夹")
+    # V4-07：复用数据三重校验（路径白名单 → facts 存在 → 计划必须随行）；
+    # 嵌套路径 / .. / 非直接子目录全部 4xx，前端深链只负责预填
+    reuse_dir = None
+    if body.reuse_data_from:
+        reuse_dir = _safe_dir(body.reuse_data_from)   # 非法路径 → 403
+        if not (reuse_dir / "facts.json").is_file():
+            raise HTTPException(422, f"复用目录缺少 facts.json：{body.reuse_data_from}")
+        if not body.plan:
+            raise HTTPException(422, "复用数据必须同时指定计划（plan），"
+                                     "作为本次覆盖检查的依据")
     argv = ["--tree", body.tree_id, "--full"]
     for flag, v in (("--project", body.project), ("--period", body.period),
                     ("--intent", body.intent), ("--folder", body.folder),
@@ -106,6 +122,8 @@ async def from_tree(body: TreeRunIn) -> dict:
             argv += [flag, v]
     if body.model_tier:
         argv += ["--model-tier", body.model_tier]
+    if reuse_dir is not None:
+        argv += ["--reuse-data", body.reuse_data_from]
     # 须为 async def：start_run 需要 running loop（同步 def 跑在线程池里没有）
     task = bus.start_run(argv, body.tree_id, asyncio.get_running_loop())
     return {"id": task.id, "events_url": f"/api/runs/{task.id}/events"}
@@ -253,9 +271,14 @@ def feedback_diff(dir_name: str, round: int) -> dict:
 @router.post("/{dir_name}/feedback/rollback")
 async def feedback_rollback(dir_name: str, body: FeedbackRollbackIn) -> dict:
     run_dir = _run_dir(dir_name)
+    # V4-08：目标轮不存在/已被回滚/是回滚记录/无快照 → 409，不启动任务不追加账本
+    from pipeline import feedback
+    try:
+        feedback.assert_rollback_allowed(run_dir, body.round)
+    except feedback.RollbackConflict as e:
+        raise HTTPException(409, str(e))
 
     def fn(progress) -> dict:
-        from pipeline import feedback
         return feedback.rollback(run_dir, body.round, progress=progress)
 
     task = bus.start_job(fn, f"rollback-{dir_name}", asyncio.get_running_loop())
@@ -400,3 +423,17 @@ async def events(run_id: str) -> StreamingResponse:
     if not t:
         raise HTTPException(404, "服务已重启，该次运行状态不可查（历史产物不受影响）")
     return bus.sse_response(t)
+
+
+# ---------- V4-02：通用任务中心端点（查询复用 GET /api/jobs/{id}——
+# routes_overview 增量字段；这里只补取消） ----------
+
+@jobs_router.post("/{job_id}/cancel")
+def job_cancel(job_id: str) -> dict:
+    t = bus.HUB.get(job_id)
+    if not t:
+        raise HTTPException(404, "任务不存在或服务已重启")
+    if t.status != "running":
+        return {"ok": False, "status": t.status}
+    t.cancel_event.set()
+    return {"ok": True}

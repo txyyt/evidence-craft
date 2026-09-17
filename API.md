@@ -219,6 +219,23 @@ id=节标题；**报告生成后不要修改 id**（改 id 等于换节，反馈
 | `--tree` 且 `--plan/--intent/--folder` 全空 | SystemExit 门禁；`--allow-qualitative` 显式放行全定性生成（A4） |
 | `settings.pipeline` | 新增 `write_temperature`（写作/修订，建议 0.3）、`judge_temperature`（评审，建议 0）——缺省不传保持旧行为（F5/F7）；`section_concurrency`（分节并行，缺省 3，置 1 回退串行，F13）；`revise_rounds` 代码缺省 2→3（F6） |
 
+### V4 体验与工作流改造（2026-09-15/16）
+
+| 路由 / 字段 | 契约 |
+|---|---|
+| `POST /api/runs/from_tree` | 请求体新增可选 `model_tier`（档位名，来自 `GET /api/settings/pipeline` 的 model_tiers 允许列表）与 `reuse_data_from`（V4-07：复用产物目录的数据层结果）——`reuse_data_from` 只接受 artifacts/ 直接子目录名（嵌套/`..`/非法字符 **403**），目录缺 `facts.json` 或未同时给 `plan` **422**；合法时 argv 转 `--reuse-data`，经典 `/api/runs/start` 契约不变 |
+| `GET /api/jobs/{id}` | **V4-02 通用任务状态**（run/job 通查；routes_overview 实现增量字段）：`{id, status, kind, stage, message, run_dir, error, error_detail, result}`——旧字段全保留 |
+| `POST /api/jobs/{id}/cancel` | **V4-02 新增**：协作取消（set cancel_event）；幂等——非 running 返回 `{ok:false, status}` 不抛错 |
+| `POST /api/trees/{id}/plan/preview/start {plan_file}` | **V4-02 新增**：预检后台化，返回 `{id, events_url}`；与同步 `POST .../plan/preview` 共用核心（指纹缓存一致），同步端点保留不变 |
+| `GET /api/trees/{id}/plans` | **V4-03 条目增量字段**：`confirmed / gap_count / qualitative_count / tree_version / tree_fingerprint / focus / folder / preview_cached`（旧计划读不到 → null，不报错） |
+| `POST /api/trees` | **V4-10**：`id` 可省略（后端从名称派生 ASCII snake_case，纯中文回退 `tree_<日期>`，冲突加 -2/-3 短序号）；显式 id 冲突仍 409 |
+| `GET /api/settings/pipeline` | **V4-05 响应增量**：`model_tiers: [{value,label,description,is_default}]`（只出档名与说明，绝不输出配置值/密钥；未配置时只有"自动"档） |
+| `GET /api/runs` 条目 | **V4-01 增量**：`artifact_dir`（目录 basename，与既有 `dir` 同值） |
+| run/job SSE `end` 事件 | **V4-01/02 增量**：`artifact_dir`（产物目录 basename）与 `result`（job 返回值，done 时）——`run_dir` 保留兼容 |
+| `GET /api/runs/{dir}/feedback/rounds` 条目 | **V4-08 增量**：`kind: apply\|rollback`、`target_round`（回滚记录指向的目标轮）、`rolled_back`（由台账 rollback 记录推导）；`POST .../feedback/rollback` 目标不存在/已被回滚/是回滚记录/无快照 → **409**，不追加账本 |
+| `meta.json`（产物） | **V4-07 增量键**：`plan_file`、`plan_fingerprint`、`facts_count`、`data_generated_at`（旧产物缺键——前端按不可复用降级） |
+| 产物目录名 | **V4-01**：subject 经 `_safe_artifact_name` 清洗（Windows 禁止字符/路径分隔符 → `-`，UTF-8 ≤160 字节），保证落在 artifacts/ 直接子目录；展示标题仍用原始 subject |
+
 ### Excel 数据接入（F11）
 
 资料文件夹支持 PDF+XLSX 混合：每个 xlsx 生成一条确定性 `xlsx_table` 绑定

@@ -71,8 +71,21 @@ def test_model(cfg: ModelCfgIn) -> dict:
 @router.get("/pipeline")
 def get_pipeline() -> dict:
     p = settings.pipeline or {}
+    # V4-05：能力描述——模型档位允许列表（只出档名与说明，绝不输出配置值/密钥）；
+    # 未配置 model_tiers 时只有"自动"档，前端保证旧后端可用
+    tiers = [{"value": "", "label": "自动（推荐）",
+              "description": "按调用角色自动分档（抽取用快速档，写作评审用质量档）",
+              "is_default": True}]
+    labels = {"fast": "快速", "quality": "质量优先"}
+    descs = {"fast": "快速档：抽取/规划更快、更省",
+             "quality": "质量优先：写作/评审用更强的模型档"}
+    for name in (settings.model_tiers or {}):
+        tiers.append({"value": str(name), "label": labels.get(name, str(name)),
+                      "description": descs.get(name, f"档位 {name}"),
+                      "is_default": False})
     return {"judge_threshold": int(p.get("judge_threshold", 36)),
-            "revise_rounds": int(p.get("revise_rounds", 2))}
+            "revise_rounds": int(p.get("revise_rounds", 2)),
+            "model_tiers": tiers}
 
 
 class PipelineIn(BaseModel):

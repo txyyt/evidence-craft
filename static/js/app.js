@@ -7,14 +7,14 @@
   const NAV = [
     { key: '/new', label: '新建报告', icon: 'plus' },
     { key: '/reports', label: '报告库', icon: 'home' },
-    { key: '/templates', label: '模板', icon: 'edit' },
+    { key: '/templates', label: '结构与文风', icon: 'edit' },
     { key: '/settings', label: '设置', icon: 'settings' },
   ];
   const META = {
     '/new': { title: '新建报告', desc: '三步向导：结构 → 数据 → 生成', icon: 'plus' },
     '/reports': { title: '报告库', desc: '全部生成记录：预览、反馈迭代、治理体检', icon: 'home' },
     '/reports/:dir': { title: '报告详情', desc: '预览 · 反馈迭代 · 治理体检 · 文件 · 元信息', icon: 'home' },
-    '/templates': { title: '模板', desc: '报告结构树：对话生成、手动编辑、版本回滚与派生', icon: 'edit' },
+    '/templates': { title: '结构与文风', desc: '结构树编辑与文风卡：改完一键写报告', icon: 'edit' },
     '/settings': { title: '系统设置', desc: '大模型、流水线参数与全局数据连接', icon: 'settings' },
   };
   // §三 §1：旧路由重定向（含 /run?dir=X 的参数改写）
@@ -82,7 +82,67 @@
         return route.value;
       });
 
-      return { route, routeQuery, meta, menuOptions, go, activeKey };
+      /* ---- V4-02：全局任务中心 banner ---- */
+      const taskList = ref([]);
+      const nowTick = ref(Date.now());
+      setInterval(() => { nowTick.value = Date.now(); }, 1000);
+      EC.tasks.restore();
+      // 订阅 store 变化 → 重连失效任务（服务重启 404 → 标记并允许清除）
+      EC.tasks.subscribe((list) => { taskList.value = list.slice(); });
+      async function reattach(t) {
+        if (t.status !== 'running') return;
+        try {
+          const s = await EC.api.get('/api/jobs/' + encodeURIComponent(t.id));
+          EC.tasks.update(t.id, { status: s.status, stage: s.stage || t.stage,
+            message: s.message || t.message,
+            artifactDir: t.artifactDir });
+          if (s.status === 'done' && t.kind === 'run' && !t.artifactDir) {
+            // run 结束但本地没记下产物目录：状态端点的 run_dir 兜底
+            EC.tasks.update(t.id, { artifactDir: (s.run_dir || '').replace(/\\/g, '/').split('/').pop() || null });
+          }
+        } catch (e) {
+          if (String(e.message).includes('404') || String(e.message).includes('不存在')
+            || String(e.message).includes('重启'))
+            EC.tasks.update(t.id, { status: 'stale', message: '任务记录已失效（服务重启）' });
+        }
+      }
+      function reattachAll() {
+        for (const t of EC.tasks.list()) reattach(t);
+      }
+      reattachAll();
+
+      const bannerTask = computed(() => {
+        const live = taskList.value.filter((t) => t.status === 'running');
+        if (live.length) return live[0];
+        // 刚结束未查看的任务也展示（最多一条，已查看/清除即消失）
+        return taskList.value.find((t) =>
+          ['done', 'error', 'cancelled', 'stale'].includes(t.status)) || null;
+      });
+      function elapsed(t) {
+        const ms = nowTick.value - new Date(t.startedAt).getTime();
+        const s = Math.max(0, Math.floor(ms / 1000));
+        return s >= 60 ? `${Math.floor(s / 60)} 分 ${s % 60} 秒` : `${s} 秒`;
+      }
+      function taskGo(t) {
+        if (t.status === 'done' && t.kind === 'run' && t.artifactDir) {
+          location.hash = '/reports/' + encodeURIComponent(t.artifactDir);
+        } else if (t.returnRoute) {
+          location.hash = t.returnRoute;
+        }
+        EC.tasks.remove(t.id);
+      }
+      async function taskCancel(t) {
+        try {
+          await EC.api.post('/api/jobs/' + encodeURIComponent(t.id) + '/cancel', {});
+          EC.toast('已请求取消', 'info');
+        } catch (e) { EC.toast(e.message, 'error'); }
+      }
+
+      return { route, routeQuery, meta, menuOptions, go, activeKey,
+               bannerTask, elapsed, taskGo, taskCancel,
+               dismiss: (t) => EC.tasks.remove(t.id),
+               kindLabel: (k) => EC.tasks.kindLabel(k),
+               stageLabel: (s) => EC.tasks.stageLabel(s) };
     },
     template: `
       <n-layout has-sider style="height:100vh">
@@ -101,6 +161,36 @@
             </div>
           </n-layout-header>
           <n-layout-content content-style="padding:20px 24px;overflow:auto;height:calc(100vh - 56px)">
+            <!-- V4-02：全局任务条（跨页可见；查看/取消/清除） -->
+            <n-alert v-if="bannerTask" size="small"
+                     :type="bannerTask.status === 'running' ? 'info'
+                       : bannerTask.status === 'error' ? 'error'
+                       : bannerTask.status === 'stale' ? 'warning' : 'success'"
+                     style="margin-bottom:12px" data-testid="active-task-banner">
+              <n-space size="small" align="center" justify="space-between">
+                <span>
+                  <b>{{ kindLabel(bannerTask.kind) }}</b>
+                  <template v-if="bannerTask.status === 'running'">
+                    ｜<span data-testid="task-stage">{{ stageLabel(bannerTask.stage) }}</span>
+                    ｜已用 {{ elapsed(bannerTask) }}
+                    <span v-if="bannerTask.message" class="ec-muted">｜{{ String(bannerTask.message).slice(0, 40) }}</span>
+                    ｜<span class="ec-muted">离开此页任务会继续</span>
+                  </template>
+                  <template v-else-if="bannerTask.status === 'done'">已完成</template>
+                  <template v-else-if="bannerTask.status === 'error'">失败：{{ bannerTask.message || '见详情' }}</template>
+                  <template v-else-if="bannerTask.status === 'cancelled'">已取消</template>
+                  <template v-else>{{ bannerTask.message || '任务记录已失效' }}</template>
+                </span>
+                <n-space size="small" :wrap="false">
+                  <n-button v-if="bannerTask.status === 'running'" size="tiny"
+                            data-testid="task-cancel" @click="taskCancel(bannerTask)">取消</n-button>
+                  <n-button v-if="bannerTask.status !== 'stale'" size="tiny" type="primary"
+                            data-testid="task-view" @click="taskGo(bannerTask)">查看</n-button>
+                  <n-button size="tiny" quaternary data-testid="task-dismiss"
+                            @click="dismiss(bannerTask)">清除</n-button>
+                </n-space>
+              </n-space>
+            </n-alert>
             <component :is="routeComponent" :key="routeKey" />
           </n-layout-content>
         </n-layout>
@@ -149,6 +239,7 @@
   for (const k of Object.keys(window.naive)) {
     if (/^N[A-Z]/.test(k)) app.component(k, window.naive[k]);
   }
+  app.component('TermHelp', window.EC.TermHelp);   // V4-09 术语就地解释
   app.config.errorHandler = (err, _inst, info) => {
     console.error(err);
     const msg = String((err && err.message) || err).slice(0, 60);

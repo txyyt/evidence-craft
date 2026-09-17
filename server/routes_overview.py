@@ -20,14 +20,24 @@ def health() -> dict:
 
 @router.get("/jobs/{job_id}")
 def job_status(job_id: str) -> dict:
-    """任意后台任务（提取/回放/试跑）的状态与错误——页面排查用。"""
+    """任意后台任务（run/job 通用）的状态与错误——页面排查用。
+    V4-02 增量字段：stage/message/run_dir（旧字段全部保留）。"""
     from server import bus
     t = bus.HUB.get(job_id)
     if not t:
         raise HTTPException(404, "任务不存在或服务已重启")
+    last = None
+    for ev in reversed(t.events):
+        if ev.get("type") == "progress":
+            last = ev
+            break
     return {"id": t.id, "status": t.status, "error": t.error,
             "error_detail": (t.error_detail or "")[-800:] if t.error_detail else None,
-            "result": t.result if t.status == "done" else None}
+            "result": t.result if t.status == "done" else None,
+            "kind": t.department,
+            "stage": (last or {}).get("stage"),
+            "message": (last or {}).get("message"),
+            "run_dir": t.run_dir}
 
 
 @router.get("/overview")
