@@ -17,3 +17,15 @@ studio_workspace/
 # 用户本地资料与临时缓存（不入库）
 高纯石英矿报告资料/
 data/cache/
+
+# 树目录运行数据：数据计划与预检缓存（含事实样例，不入库）
+config/trees/*/plans/
+
+# 真实业务树（对话生成，本地数据不入库；测试/演示树仍跟踪）
+config/trees/国内稀土出口管制与产业动态报告/
+config/trees/国内稀土出口管制月度动态简报/
+config/trees/国内镁合金产业月度动态/
+config/trees/国内高纯石英产业研究报告/
+config/trees/国内高纯石英研究报告/
+config/trees/稀土月报结构树/
+config/trees/萤石综述/

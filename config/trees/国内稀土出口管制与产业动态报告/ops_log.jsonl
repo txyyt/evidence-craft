@@ -1,4 +1,0 @@
-{"ts": "2026-09-15T01:54:41", "actor": "agent", "op": {"action": "create"}, "summary": "对话生成整棵树", "version_after": 1, "fingerprint": "8cd793d3c278"}
-{"ts": "2026-09-15T01:58:59", "actor": "system", "op": {"action": "gap_decision"}, "summary": "缺口裁决（定性/砍掉）", "version_after": 2, "fingerprint": "7cfd191322ca"}
-{"ts": "2026-09-15T02:10:53", "actor": "agent", "op": {"action": "feedback_structure"}, "summary": "反馈结构调整", "version_after": 3, "fingerprint": "7cfd191322ca"}
-{"ts": "2026-09-15T02:16:03", "actor": "agent", "op": {"action": "feedback_structure"}, "summary": "反馈结构调整", "version_after": 4, "fingerprint": "81d74004fc38"}
